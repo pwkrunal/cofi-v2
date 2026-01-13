@@ -1,0 +1,26 @@
+Read say 10000 files from client directory (read from .env) eg. /client_volume/<batch_date> and batch date format id 15-12-2024
+Except 2 files rest files are audio files
+These 2 files are CSV named as callMetadata.csv and tradeMetadata.csv
+Audio files are to be distributed among n gpu machines(read from .env) to a specific directory save a copy in fileDistribution table
+Mark dbInserstatus Completed
+Cofi running on CPU machine has to start docker of ivr(read from .env) on these n gpus and wait for 60 seconds(read from .env) 
+Then we hit ivr api on these n gpus with payload just give filename and response is not of use now
+Mark ivrStatus Completed
+Then we stop ivr docker and start lid docker
+Then we hit lid ap ion these n gpus with payload just give filename and response tostore in lidStatus table
+Mark lidStatus Completed
+Stop lid docker
+Use this lidStatus table and insert data into call table 
+Then we start stt docker and wait for 180 seconds 
+Then hit stt docker with api (read from .env) using call table status = ‘Pending’ on these n gpus mark in call table status = ‘TranscriptDone’
+Mark sttStatus Completed
+Then we start llm1 docker and wait for 180 seconds
+Then hit llm1 docker api (read from .env) using call table status = ‘TranscriptDone’ on these n gpus and mark in call table status = ‘AuditDone’
+Mark llmStatus1 Completed
+Then we start llm2 docker and wait for 180 seconds
+Then hit llm2 docker api (read from .env) using call table status = ‘AuditDone’ on these n gpus and mark in call table status = ‘Completed’
+Mark llmStatus2 Completed
+Docker names to start and stop which are in network  keep in env (read from .env)
+Pre requisite assume batchDate and currentBatch = 1 to identify which batch to start
+Update status accordingly in batchStatus table
+Using batchStatus and fileDistribution we can keep track which file has completed what, even some error comes we can resume operations from there

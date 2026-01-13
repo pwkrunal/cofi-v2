@@ -1,0 +1,557 @@
+{
+  "info": {
+    "name": "Cofi Service - AuditNex API Collection",
+    "description": "Comprehensive API collection for the Cofi Service and related processing APIs",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Cofi Service",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{cofi_base_url}}/health",
+              "host": [
+                "{{cofi_base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Verify that the cofi-service is running and healthy."
+          },
+          "response": []
+        },
+        {
+          "name": "Upload Audio Files for Audit",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "files",
+                  "type": "file",
+                  "src": [],
+                  "description": "Audio files to process (multiple files supported)"
+                },
+                {
+                  "key": "process_id",
+                  "value": "1",
+                  "type": "text",
+                  "description": "Process ID for categorizing the audit"
+                },
+                {
+                  "key": "category_mapping_id",
+                  "value": "1",
+                  "type": "text",
+                  "description": "Category mapping ID (default: 1)"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{cofi_base_url}}/audit/upload",
+              "host": [
+                "{{cofi_base_url}}"
+              ],
+              "path": [
+                "audit",
+                "upload"
+              ]
+            },
+            "description": "Upload audio files for audit processing through the complete pipeline (LID → STT → LLM1 → LLM2)."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Audit Task Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{cofi_base_url}}/audit/status/:task_id",
+              "host": [
+                "{{cofi_base_url}}"
+              ],
+              "path": [
+                "audit",
+                "status",
+                ":task_id"
+              ],
+              "variable": [
+                {
+                  "key": "task_id",
+                  "value": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                  "description": "UUID of the audit task"
+                }
+              ]
+            },
+            "description": "Check the progress of an audit task."
+          },
+          "response": []
+        },
+        {
+          "name": "Reaudit Existing Files",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"audio_names\": [\n        \"audio1.wav\",\n        \"audio2.wav\"\n    ],\n    \"stages\": [\"lid\", \"stt\", \"llm1\", \"llm2\"]\n}"
+            },
+            "url": {
+              "raw": "{{cofi_base_url}}/reaudit",
+              "host": [
+                "{{cofi_base_url}}"
+              ],
+              "path": [
+                "reaudit"
+              ]
+            },
+            "description": "Reprocess existing audio files through specified pipeline stages."
+          },
+          "response": []
+        }
+      ],
+      "description": "Main FastAPI service for managing audio audit processing workflows."
+    },
+    {
+      "name": "Mediator Service",
+      "item": [
+        {
+          "name": "Start Container",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"container_name\": \"auditnex-stt-inference-1\"\n}"
+            },
+            "url": {
+              "raw": "{{mediator_base_url}}/start_container",
+              "host": [
+                "{{mediator_base_url}}"
+              ],
+              "path": [
+                "start_container"
+              ]
+            },
+            "description": "Start a Docker container on a GPU machine."
+          },
+          "response": []
+        },
+        {
+          "name": "Stop Container",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"container_name\": \"auditnex-stt-inference-1\"\n}"
+            },
+            "url": {
+              "raw": "{{mediator_base_url}}/stop_container",
+              "host": [
+                "{{mediator_base_url}}"
+              ],
+              "path": [
+                "stop_container"
+              ]
+            },
+            "description": "Stop a Docker container on a GPU machine."
+          },
+          "response": []
+        },
+        {
+          "name": "Check Container Status",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"container_name\": \"auditnex-llm-extraction-1\"\n}"
+            },
+            "url": {
+              "raw": "{{mediator_base_url}}/container_status",
+              "host": [
+                "{{mediator_base_url}}"
+              ],
+              "path": [
+                "container_status"
+              ]
+            },
+            "description": "Check if a container is running on a GPU machine."
+          },
+          "response": []
+        },
+        {
+          "name": "Upload File",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Audio file to upload"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{mediator_base_url}}/upload_file",
+              "host": [
+                "{{mediator_base_url}}"
+              ],
+              "path": [
+                "upload_file"
+              ]
+            },
+            "description": "Upload a file to a GPU machine."
+          },
+          "response": []
+        }
+      ],
+      "description": "Container management and file operations on GPU machines."
+    },
+    {
+      "name": "Processing APIs",
+      "item": [
+        {
+          "name": "Denoise Audio",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"file_name\": \"audio_file.wav\"\n}"
+            },
+            "url": {
+              "raw": "{{denoise_api_url}}/process",
+              "host": [
+                "{{denoise_api_url}}"
+              ],
+              "path": [
+                "process"
+              ]
+            },
+            "description": "Remove background noise from audio files. Should be called before IVR detection to improve audio quality."
+          },
+          "response": []
+        },
+        {
+          "name": "IVR Detection",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"file_name\": \"audio_file.wav\"\n}"
+            },
+            "url": {
+              "raw": "{{ivr_api_url}}/file_ivr_clean",
+              "host": [
+                "{{ivr_api_url}}"
+              ],
+              "path": [
+                "file_ivr_clean"
+              ]
+            },
+            "description": "Detect and clean IVR segments from audio files."
+          },
+          "response": []
+        },
+        {
+          "name": "Language Identification (LID)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"file_name\": \"audio_file.wav\",\n    \"entity\": \"LID\",\n    \"response\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{lid_api_url}}/file_stt_features",
+              "host": [
+                "{{lid_api_url}}"
+              ],
+              "path": [
+                "file_stt_features"
+              ]
+            },
+            "description": "Identify the language spoken in an audio file."
+          },
+          "response": []
+        },
+        {
+          "name": "Speech-to-Text (STT)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"file_name\": \"audio_file.wav\",\n    \"no_of_speakers\": 2,\n    \"audio_language\": \"hi\",\n    \"post_processing\": true,\n    \"use_ivr\": true,\n    \"use_time_based\": false\n}"
+            },
+            "url": {
+              "raw": "{{stt_api_url}}/file_stt_transcript",
+              "host": [
+                "{{stt_api_url}}"
+              ],
+              "path": [
+                "file_stt_transcript"
+              ]
+            },
+            "description": "Convert speech audio to text transcription. Optional parameters: post_processing (bool, default: true), use_ivr (bool, IVR processing), use_time_based (bool, automatic diarization - when true, set no_of_speakers=0)."
+          },
+          "response": []
+        },
+        {
+          "name": "LLM Extract Information",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"text\": \"Transcript text here...\",\n    \"text_language\": \"hi\",\n    \"prompts\": [\n        {\n            \"entity\": \"trade_classify\",\n            \"prompts\": [\"Your prompt instruction here...\"],\n            \"type\": \"multiple\"\n        }\n    ],\n    \"additional_params\": {}\n}"
+            },
+            "url": {
+              "raw": "{{nlp_api_url}}/extract_information",
+              "host": [
+                "{{nlp_api_url}}"
+              ],
+              "path": [
+                "extract_information"
+              ]
+            },
+            "description": "Extract information and analyze text using LLM prompts."
+          },
+          "response": []
+        },
+        {
+          "name": "LLM1 - Trade Extraction",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"text\": \"Speaker 0: I want to buy 100 shares of Reliance at 2500.\\nSpeaker 1: Sure, let me place the order.\",\n    \"text_language\": \"hi\",\n    \"prompts\": [\"\"],\n    \"additional_params\": {\n        \"trade_details\": [\n            {\n                \"symbol\": \"RELIANCE\",\n                \"strikePrice\": 2500,\n                \"tradeQuantity\": 100,\n                \"tradePrice\": 2500,\n                \"buySell\": \"Buy\",\n                \"scripName\": \"Reliance Industries\"\n            }\n        ]\n    }\n}"
+            },
+            "url": {
+              "raw": "{{nlp_api_url}}/extract_information",
+              "host": [
+                "{{nlp_api_url}}"
+              ],
+              "path": [
+                "extract_information"
+              ]
+            },
+            "description": "Extract trade information using LLM1 (NLP API Q1). Used in llm1_stage.py. Sends transcript text with trade details from tradeAudioMapping table. Returns extracted trade information including scriptName, optionType, lot/quantity, strikePrice, tradePrice, buySell, expiryDate, and currentMarket. Results are stored in callConversation table."
+          },
+          "response": []
+        },
+        {
+          "name": "LLM2 - Answer Audit Question",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"text\": \"Speaker 0: Hello, I want to buy 100 shares of Reliance.\\nSpeaker 1: Sure, let me place the order for you.\",\n    \"text_language\": \"hi\",\n    \"prompts\": [\n        {\n            \"entity\": \"greeting\",\n            \"prompts\": [\"Did the dealer greet the client? Answer in YES or NO.\"],\n            \"type\": \"multiple\"\n        }\n    ],\n    \"additional_params\": {}\n}"
+            },
+            "url": {
+              "raw": "{{nlp_api_q2}}/extract_information",
+              "host": [
+                "{{nlp_api_q2}}"
+              ],
+              "path": [
+                "extract_information"
+              ]
+            },
+            "description": "Answer audit questions using LLM2 (NLP API Q2). Used in llm2_stage.py answer_question method. Entity should match question attribute, prompts should contain the question intent. Response is normalized using answer mappings (yes->YES, no->NO, dealer->Dealer, client->Client, both->Both client & dealer, anger/disgust->YES)."
+          },
+          "response": []
+        }
+      ],
+      "description": "IVR, LID, STT, and LLM processing APIs."
+    },
+    {
+      "name": "Metadata APIs",
+      "item": [
+        {
+          "name": "Upload Trade Metadata",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Trade metadata CSV file (trade_metadata_DD-MM-YYYY.csv)"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{cofi_url}}/api/v1/upload_trademetadata",
+              "host": [
+                "{{cofi_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "upload_trademetadata"
+              ]
+            },
+            "description": "Upload trade metadata CSV file."
+          },
+          "response": []
+        },
+        {
+          "name": "Upload Call Metadata",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Call metadata CSV file (call_metadata_DD-MM-YYYY.csv)"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{cofi_url}}/api/v1/upload_callmetadata",
+              "host": [
+                "{{cofi_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "upload_callmetadata"
+              ]
+            },
+            "description": "Upload call metadata CSV file."
+          },
+          "response": []
+        }
+      ],
+      "description": "Trade and call metadata upload APIs."
+    }
+  ],
+  "variable": [
+    {
+      "key": "cofi_base_url",
+      "value": "http://localhost:5064",
+      "type": "string"
+    },
+    {
+      "key": "mediator_base_url",
+      "value": "http://localhost:5065",
+      "type": "string"
+    },
+    {
+      "key": "denoise_api_url",
+      "value": "http://localhost:5010",
+      "type": "string",
+      "description": "Denoise API base URL"
+    },
+    {
+      "key": "ivr_api_url",
+      "value": "http://localhost:4080",
+      "type": "string"
+    },
+    {
+      "key": "lid_api_url",
+      "value": "http://localhost:4070",
+      "type": "string"
+    },
+    {
+      "key": "stt_api_url",
+      "value": "http://localhost:4030",
+      "type": "string"
+    },
+    {
+      "key": "nlp_api_url",
+      "value": "http://localhost:7063",
+      "type": "string"
+    },
+    {
+      "key": "nlp_api_q2",
+      "value": "http://localhost:7062",
+      "type": "string",
+      "description": "NLP API for LLM2 (Question Answering)"
+    },
+    {
+      "key": "cofi_url",
+      "value": "http://localhost:5064",
+      "type": "string"
+    }
+  ]
+}

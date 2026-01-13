@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cofi Pipeline Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <h1>🎵 Cofi Batch Processing Dashboard</h1>
+        <div id="batch-info">
+            <div class="batch-info-item">
+                <label>Batch ID:</label>
+                <span id="batch-id">-</span>
+            </div>
+            <div class="batch-info-item">
+                <label>Batch Date:</label>
+                <span id="batch-date">-</span>
+            </div>
+            <div class="batch-info-item">
+                <label>Overall Status:</label>
+                <span id="batch-status" class="badge">-</span>
+            </div>
+            <div class="batch-info-item">
+                <label>Is Current:</label>
+                <span id="batch-current" class="badge">-</span>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div id="stages-container">
+            <!-- File Distribution Card -->
+            <div class="stage-card" data-stage="file_distribution">
+                <div class="stage-header">
+                    <h2>📁 File Distribution</h2>
+                    <span class="stage-status pending">pending</span>
+                </div>
+                <div class="stage-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <span class="progress-text">0/0 files</span>
+                </div>
+                <div class="stage-details">
+                    <div class="detail-item">
+                        <label>Total:</label>
+                        <span class="total-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Processed:</label>
+                        <span class="processed-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Errors:</label>
+                        <span class="error-count">0</span>
+                    </div>
+                </div>
+                <div class="stage-logs">
+                    <h3>Recent Events</h3>
+                    <ul class="event-list"></ul>
+                </div>
+            </div>
+
+            <!-- Call Metadata Card -->
+            <div class="stage-card" data-stage="callmetadata">
+                <div class="stage-header">
+                    <h2>📋 Call Metadata</h2>
+                    <span class="stage-status pending">pending</span>
+                </div>
+                <div class="stage-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <span class="progress-text">0/0 records</span>
+                </div>
+                <div class="stage-details">
+                    <div class="detail-item">
+                        <label>Total:</label>
+                        <span class="total-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Processed:</label>
+                        <span class="processed-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Errors:</label>
+                        <span class="error-count">0</span>
+                    </div>
+                </div>
+                <div class="stage-logs">
+                    <h3>Recent Events</h3>
+                    <ul class="event-list"></ul>
+                </div>
+            </div>
+
+            <!-- Trade Metadata Card -->
+            <div class="stage-card" data-stage="trademetadata">
+                <div class="stage-header">
+                    <h2>💼 Trade Metadata</h2>
+                    <span class="stage-status pending">pending</span>
+                </div>
+                <div class="stage-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <span class="progress-text">0/0 records</span>
+                </div>
+                <div class="stage-details">
+                    <div class="detail-item">
+                        <label>Total:</label>
+                        <span class="total-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Processed:</label>
+                        <span class="processed-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Errors:</label>
+                        <span class="error-count">0</span>
+                    </div>
+                </div>
+                <div class="stage-logs">
+                    <h3>Recent Events</h3>
+                    <ul class="event-list"></ul>
+                </div>
+            </div>
+
+            <!-- Denoise Card -->
+            <div class="stage-card" data-stage="denoise">
+                <div class="stage-header">
+                    <h2>🔇 Denoise</h2>
+                    <span class="stage-status pending">pending</span>
+                </div>
+                <div class="stage-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <span class="progress-text">0/0 files</span>
+                </div>
+                <div class="stage-details">
+                    <div class="detail-item">
+                        <label>Total:</label>
+                        <span class="total-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Processed:</label>
+                        <span class="processed-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Errors:</label>
+                        <span class="error-count">0</span>
+                    </div>
+                </div>
+                <div class="stage-logs">
+                    <h3>Recent Events</h3>
+                    <ul class="event-list"></ul>
+                </div>
+            </div>
+
+            <!-- IVR Card -->
+            <div class="stage-card" data-stage="ivr">
+                <div class="stage-header">
+                    <h2>☎️ IVR Detection</h2>
+                    <span class="stage-status pending">pending</span>
+                </div>
+                <div class="stage-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <span class="progress-text">0/0 files</span>
+                </div>
+                <div class="stage-details">
+                    <div class="detail-item">
+                        <label>Total:</label>
+                        <span class="total-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Processed:</label>
+                        <span class="processed-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Errors:</label>
+                        <span class="error-count">0</span>
+                    </div>
+                </div>
+                <div class="stage-logs">
+                    <h3>Recent Events</h3>
+                    <ul class="event-list"></ul>
+                </div>
+            </div>
+
+            <!-- LID Card -->
+            <div class="stage-card" data-stage="lid">
+                <div class="stage-header">
+                    <h2>🌍 Language Identification</h2>
+                    <span class="stage-status pending">pending</span>
+                </div>
+                <div class="stage-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <span class="progress-text">0/0 files</span>
+                </div>
+                <div class="stage-details">
+                    <div class="detail-item">
+                        <label>Total:</label>
+                        <span class="total-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Processed:</label>
+                        <span class="processed-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Errors:</label>
+                        <span class="error-count">0</span>
+                    </div>
+                </div>
+                <div class="stage-logs">
+                    <h3>Recent Events</h3>
+                    <ul class="event-list"></ul>
+                </div>
+            </div>
+
+            <!-- Triaging Card -->
+            <div class="stage-card" data-stage="triaging">
+                <div class="stage-header">
+                    <h2>🔀 Triaging (Rule Engine)</h2>
+                    <span class="stage-status pending">pending</span>
+                </div>
+                <div class="stage-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <span class="progress-text">0/0 mappings</span>
+                </div>
+                <div class="stage-details">
+                    <div class="detail-item">
+                        <label>Total:</label>
+                        <span class="total-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Processed:</label>
+                        <span class="processed-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Errors:</label>
+                        <span class="error-count">0</span>
+                    </div>
+                </div>
+                <div class="stage-logs">
+                    <h3>Recent Events</h3>
+                    <ul class="event-list"></ul>
+                </div>
+            </div>
+
+            <!-- STT Card -->
+            <div class="stage-card" data-stage="stt">
+                <div class="stage-header">
+                    <h2>🗣️ Speech-to-Text</h2>
+                    <span class="stage-status pending">pending</span>
+                </div>
+                <div class="stage-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <span class="progress-text">0/0 files</span>
+                </div>
+                <div class="stage-details">
+                    <div class="detail-item">
+                        <label>Total:</label>
+                        <span class="total-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Processed:</label>
+                        <span class="processed-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Errors:</label>
+                        <span class="error-count">0</span>
+                    </div>
+                </div>
+                <div class="stage-logs">
+                    <h3>Recent Events</h3>
+                    <ul class="event-list"></ul>
+                </div>
+            </div>
+
+            <!-- LLM1 Card -->
+            <div class="stage-card" data-stage="llm1">
+                <div class="stage-header">
+                    <h2>🤖 LLM1 (Trade Extraction)</h2>
+                    <span class="stage-status pending">pending</span>
+                </div>
+                <div class="stage-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <span class="progress-text">0/0 files</span>
+                </div>
+                <div class="stage-details">
+                    <div class="detail-item">
+                        <label>Total:</label>
+                        <span class="total-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Processed:</label>
+                        <span class="processed-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Errors:</label>
+                        <span class="error-count">0</span>
+                    </div>
+                </div>
+                <div class="stage-logs">
+                    <h3>Recent Events</h3>
+                    <ul class="event-list"></ul>
+                </div>
+            </div>
+
+            <!-- LLM2 Card -->
+            <div class="stage-card" data-stage="llm2">
+                <div class="stage-header">
+                    <h2>💬 LLM2 (Question Answering)</h2>
+                    <span class="stage-status pending">pending</span>
+                </div>
+                <div class="stage-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <span class="progress-text">0/0 files</span>
+                </div>
+                <div class="stage-details">
+                    <div class="detail-item">
+                        <label>Total:</label>
+                        <span class="total-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Processed:</label>
+                        <span class="processed-files">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>Errors:</label>
+                        <span class="error-count">0</span>
+                    </div>
+                </div>
+                <div class="stage-logs">
+                    <h3>Recent Events</h3>
+                    <ul class="event-list"></ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Payload Inspector Modal -->
+        <div id="payload-modal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h2 id="modal-title">Event Details</h2>
+                <pre id="modal-json"></pre>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <p>Cofi Pipeline Dashboard v1.0 | Real-time monitoring with SSE</p>
+    </footer>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

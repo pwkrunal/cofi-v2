@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  cofi-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cofi-dashboard
+    ports:
+      - "5066:5066"
+    environment:
+      - MYSQL_HOST=${MYSQL_HOST:-localhost}
+      - MYSQL_PORT=${MYSQL_PORT:-3306}
+      - MYSQL_USER=${MYSQL_USER:-root}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-password}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-testDb}
+    volumes:
+      # Mount source code for development (hot reload)
+      - ./src:/app/src:ro
+    restart: unless-stopped
+    networks:
+      - cofi-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  cofi-network:
+    driver: bridge

@@ -1,0 +1,110 @@
+version: '3.8'
+
+services:
+  # Mediator Service - Manages Docker containers on GPU machines
+  cofi-mediator:
+    build:
+      context: ./cofi-mediator-service
+      dockerfile: Dockerfile
+    image: cofi-mediator:latest
+    container_name: cofi-mediator-service
+    ports:
+      - "5065:5065"
+    environment:
+      - STORAGE_PATH=${STORAGE_PATH:-/audio_files}
+      - PORT=5065
+      - HOST=0.0.0.0
+    volumes:
+      # Mount Docker socket to allow container management
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount storage path
+      - ${STORAGE_PATH:-./audio_files}:/audio_files
+    networks:
+      - auditnex-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Batch Processing Service - Orchestrates pipeline execution
+  cofi-service:
+    build:
+      context: ./cofi-service
+      dockerfile: Dockerfile
+    image: cofi-service:latest
+    container_name: cofi-service
+    env_file:
+      - ./cofi-service/.env
+    volumes:
+      - ${CLIENT_VOLUME:-./data}:/client_volume
+    networks:
+      - auditnex-network
+    restart: "no"
+    command: python -m src.main
+    depends_on:
+      - cofi-mediator
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # API Service - Handles file uploads and batch management
+  cofi-api:
+    build:
+      context: ./cofi-service
+      dockerfile: Dockerfile
+    image: cofi-service:latest
+    container_name: cofi-api
+    ports:
+      - "5064:5064"
+    env_file:
+      - ./cofi-service/.env
+    volumes:
+      - ${CLIENT_VOLUME:-./data}:/client_volume
+    networks:
+      - auditnex-network
+    restart: unless-stopped
+    command: python -m src.api
+    depends_on:
+      - cofi-mediator
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Dashboard Service - Real-time monitoring UI
+  cofi-dashboard:
+    build:
+      context: ./cofi-dashboard
+      dockerfile: Dockerfile
+    image: cofi-dashboard:latest
+    container_name: cofi-dashboard
+    ports:
+      - "5066:5066"
+    environment:
+      - MYSQL_HOST=${MYSQL_HOST:-localhost}
+      - MYSQL_PORT=${MYSQL_PORT:-3306}
+      - MYSQL_USER=${MYSQL_USER:-root}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-password}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-testDb}
+      - SSE_POLL_INTERVAL=${SSE_POLL_INTERVAL:-5}
+    volumes:
+      # Mount source code for development (hot reload)
+      - ./cofi-dashboard/src:/app/src:ro
+    networks:
+      - auditnex-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  auditnex-network:
+    driver: bridge
+    name: auditnex-network

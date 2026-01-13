@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  # Batch processing service (runs pipeline)
+  cofi-service:
+    build: .
+    container_name: cofi-service
+    env_file:
+      - .env
+    volumes:
+      - ${CLIENT_VOLUME:-./data}:/client_volume
+    networks:
+      - auditnex-network
+    restart: "no"
+    command: python -m src.main
+
+  # API service (handles uploads)
+  cofi-api:
+    build: .
+    container_name: cofi-api
+    ports:
+      - "5064:5064"
+    env_file:
+      - .env
+    volumes:
+      - ${CLIENT_VOLUME:-./data}:/client_volume
+    networks:
+      - auditnex-network
+    restart: unless-stopped
+    command: python -m src.api
+
+networks:
+  auditnex-network:
+    external: true
