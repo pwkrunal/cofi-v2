@@ -66,8 +66,8 @@ class AuditPipeline:
         # Stage: LID
         await self._run_lid_stage(batch_id)
         
-        # Create Call records from LID results
-        self._create_calls_from_lid(batch_id)
+        # Update Call records with LID results (language and duration)
+        self._update_calls_from_lid(batch_id)
         
         # Stage: STT
         await self._run_stt_stage(batch_id)
@@ -105,23 +105,50 @@ class AuditPipeline:
         return batch_id
     
     async def _distribute_files(self, file_names: List[str], upload_dir: str, batch_id: int):
-        """Distribute files to GPUs using round-robin."""
+        """Distribute files to GPUs using round-robin in parallel."""
         gpu_list = self.settings.gpu_machine_list
-        
-        for idx, file_name in enumerate(file_names):
-            gpu_ip = gpu_list[idx % len(gpu_list)]
+
+        # Get auditFormId once for all calls
+        audit_form_id = self.process_repo.get_audit_form_id(self.process_id)
+
+        async def upload_and_record(file_name: str, gpu_ip: str):
+            """Upload a single file and create records."""
             file_path = Path(upload_dir) / file_name
-            
+
             try:
                 # Upload to GPU
                 await self.mediator.upload_file(gpu_ip, str(file_path), file_name)
-                
+
                 # Create file distribution record
                 self.file_dist_repo.insert(file_name, gpu_ip, batch_id)
-                
-                logger.info("file_distributed", file=file_name, gpu=gpu_ip)
+
+                # Create call record (language info will be updated after LID stage)
+                self.call_repo.insert_from_distribution(
+                    audio_name=file_name,
+                    batch_id=batch_id,
+                    ip=gpu_ip,
+                    process_id=self.process_id,
+                    category_mapping_id=self.category_mapping_id,
+                    audio_endpoint=self.settings.audio_endpoint,
+                    audit_form_id=audit_form_id
+                )
+
+                logger.info("file_distributed", file=file_name, gpu=gpu_ip, task_id=self.task_id)
+                return True
             except Exception as e:
-                logger.error("file_distribution_failed", file=file_name, error=str(e))
+                logger.error("file_distribution_failed", file=file_name, error=str(e), task_id=self.task_id)
+                return False
+
+        # Create upload tasks for all files (round-robin distribution)
+        upload_tasks = []
+        for idx, file_name in enumerate(file_names):
+            gpu_ip = gpu_list[idx % len(gpu_list)]
+            task = upload_and_record(file_name, gpu_ip)
+            upload_tasks.append(task)
+
+        # Execute all uploads in parallel
+        logger.info("uploading_files_parallel", total_files=len(upload_tasks), task_id=self.task_id)
+        await asyncio.gather(*upload_tasks, return_exceptions=False)
     
     async def _run_lid_stage(self, batch_id: int):
         """Run LID stage and update progress."""
@@ -135,38 +162,31 @@ class AuditPipeline:
         
         logger.info("lid_stage_completed", task_id=self.task_id)
     
-    def _create_calls_from_lid(self, batch_id: int):
-        """Create Call records from LID results."""
+    def _update_calls_from_lid(self, batch_id: int):
+        """Update Call records with language info from LID results."""
         lid_records = self.lid_repo.get_by_batch(batch_id)
-        
-        # Get auditFormId from process table
-        audit_form_id = self.process_repo.get_audit_form_id(self.process_id)
-        
+
+        updated_count = 0
         for record in lid_records:
-            # Check if call already exists
-            existing = self.call_repo.get_by_audio_name(record['file'], batch_id)
-            if existing:
-                continue
-            
             # Get language ID
             lang_code = record.get('language', 'unknown')
             lang_record = self.language_repo.get_by_code(lang_code)
             language_id = lang_record['id'] if lang_record else None
-            
-            # Create call record
-            self.call_repo.insert(
-                audio_name=record['file'],
-                lang=lang_code,
-                language_id=language_id,
-                batch_id=batch_id,
-                process_id=self.process_id,
-                category_mapping_id=self.category_mapping_id,
-                audio_endpoint=self.settings.audio_endpoint,
-                audio_duration=record.get('duration', 0),
-                audit_form_id=audit_form_id
-            )
-        
-        logger.info("calls_created_from_lid", count=len(lid_records), task_id=self.task_id)
+
+            # Update existing call record with language info and duration
+            try:
+                self.call_repo.update_lid_info(
+                    audio_name=record['file'],
+                    batch_id=batch_id,
+                    language_id=language_id,
+                    lang_code=lang_code,
+                    audio_duration=record.get('duration', 0)
+                )
+                updated_count += 1
+            except Exception as e:
+                logger.error("call_lid_update_failed", file=record['file'], error=str(e), task_id=self.task_id)
+
+        logger.info("calls_updated_from_lid", count=updated_count, task_id=self.task_id)
     
     async def _run_stt_stage(self, batch_id: int):
         """Run STT stage and update progress."""

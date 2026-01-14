@@ -427,48 +427,62 @@ class LLM2Stage:
     
     async def execute(self, batch_id: int, previous_container: Optional[str] = None):
         """
-        Execute LLM2 stage for audit question answering.
-        
+        Execute LLM2 stage for audit question answering with parallel API calls.
+
         Note: This stage calls external NLP API directly, not via GPU mediator.
         """
         logger.info("llm2_stage_starting", batch_id=batch_id)
-        
+
         # Get calls with status='AuditDone'
         call_records = self.call_repo.get_by_status(batch_id, "AuditDone")
-        
+
         if not call_records:
             logger.info("no_pending_calls_for_llm2")
             return
-        
+
         logger.info("calls_to_process", count=len(call_records))
-        
-        successful = 0
-        failed = 0
-        
-        for call_record in call_records:
-            try:
-                await self.process_call(call_record)
-                
-                # Update call status
-                self.call_repo.update_status(
-                    call_record['audioName'],
-                    "AuditDone",
-                    "Complete"
-                )
 
-                # Send webhook notification
+        # Semaphore to limit concurrent API calls based on GPU count
+        max_concurrent = len(self.settings.gpu_machine_list)
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def process_single_call(call_record):
+            """Process a single call with concurrency limit."""
+            async with semaphore:
                 try:
-                    webhook_client = get_webhook_client()
-                    webhook_client.notify_call_status(call_record['id'], "Complete")
-                except Exception as webhook_err:
-                    logger.error("webhook_failed", call_id=call_record['id'], status="Complete", error=str(webhook_err))
+                    await self.process_call(call_record)
 
-                successful += 1
-                
-            except Exception as e:
-                logger.error("llm2_call_processing_failed", 
-                           call_id=call_record['id'], 
-                           error=str(e))
-                failed += 1
-        
+                    # Update call status
+                    self.call_repo.update_status(
+                        call_record['audioName'],
+                        "AuditDone",
+                        "Complete"
+                    )
+
+                    # Send webhook notification
+                    try:
+                        webhook_client = get_webhook_client()
+                        webhook_client.notify_call_status(call_record['id'], "Complete")
+                    except Exception as webhook_err:
+                        logger.error("webhook_failed", call_id=call_record['id'], status="Complete", error=str(webhook_err))
+
+                    return True
+
+                except Exception as e:
+                    logger.error("llm2_call_processing_failed",
+                               call_id=call_record['id'],
+                               error=str(e))
+                    return False
+
+        # Create tasks for all calls
+        tasks = [process_single_call(record) for record in call_records]
+
+        # Execute all in parallel (with concurrency limit)
+        logger.info("llm2_processing_parallel", max_concurrent=max_concurrent)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Count successes and failures
+        successful = sum(1 for result in results if result is True)
+        failed = sum(1 for result in results if result is False or isinstance(result, Exception))
+
         logger.info("llm2_stage_completed", successful=successful, failed=failed)

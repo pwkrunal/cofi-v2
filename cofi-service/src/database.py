@@ -365,6 +365,48 @@ class CallRepo:
         query = "UPDATE `call` SET status = %s WHERE id = %s"
         self.db.execute_update(query, (new_status, call_id))
 
+    def update_lid_info(self, audio_name: str, batch_id: int, language_id: Optional[int],
+                       lang_code: str, audio_duration: float):
+        """Update language_id, lang, and audio_duration from LID results."""
+        query = """
+            UPDATE `call`
+            SET languageId = %s, lang = %s, audioDuration = %s
+            WHERE audioName = %s AND batchId = %s
+        """
+        self.db.execute_update(query, (language_id, lang_code, audio_duration, audio_name, batch_id))
+
+    def insert_from_distribution(
+        self,
+        audio_name: str,
+        batch_id: int,
+        ip: str,
+        process_id: int,
+        category_mapping_id: int,
+        audio_endpoint: str,
+        audit_form_id: Optional[int]
+    ) -> int:
+        """
+        Insert call record during file distribution stage.
+        Language info and duration will be updated after LID stage.
+        """
+        # Build audio URL
+        audio_url = f"{audio_endpoint}/{audio_name}"
+
+        query = """
+            INSERT INTO `call` (
+                audioName, audioDuration, lang, status, batchId, ip,
+                processId, userId, categoryMappingId, audioUrl,
+                auditFormId, languageId, type
+            )
+            VALUES (%s, %s, %s, 'Pending', %s, %s, %s, %s, %s, %s, %s, %s, 'Call')
+        """
+        # Initial values: duration=0, lang='unknown', userId=1 (default), languageId=NULL
+        return self.db.execute_insert(query, (
+            audio_name, 0, 'unknown', batch_id, ip,
+            process_id, 1, category_mapping_id, audio_url,
+            audit_form_id, None
+        ))
+
 
 class TranscriptRepo:
     """Repository for transcript table operations."""

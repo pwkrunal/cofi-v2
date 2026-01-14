@@ -286,45 +286,59 @@ class LLM1Stage:
     
     async def execute(self, batch_id: int, previous_container: Optional[str] = None):
         """
-        Execute LLM1 stage.
-        
+        Execute LLM1 stage with parallel API calls.
+
         Note: This stage calls external NLP API directly, not via GPU mediator.
         """
         logger.info("llm1_stage_starting", batch_id=batch_id)
-        
+
         # Get calls with status='TranscriptDone'
         call_records = self.call_repo.get_by_status(batch_id, "TranscriptDone")
-        
+
         if not call_records:
             logger.info("no_pending_calls_for_llm1")
             return
-        
+
         logger.info("calls_to_process", count=len(call_records))
-        
-        successful = 0
-        failed = 0
-        
-        for call_record in call_records:
-            try:
-                # Build payload with transcript and trade details
-                payload = self.build_payload(call_record)
-                
-                # Skip if no transcript
-                if not payload['text']:
-                    logger.warning("no_transcript_skipping", file=call_record['audioName'])
-                    continue
-                
-                # Call NLP API
-                response = await self.call_nlp_api(payload)
-                
-                # Process response
-                self.process_response(call_record, response)
-                successful += 1
-                
-            except Exception as e:
-                logger.error("llm1_processing_failed", 
-                           file=call_record['audioName'], 
-                           error=str(e))
-                failed += 1
-        
+
+        # Semaphore to limit concurrent API calls based on GPU count
+        max_concurrent = len(self.settings.gpu_machine_list)
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def process_single_call(call_record):
+            """Process a single call with concurrency limit."""
+            async with semaphore:
+                try:
+                    # Build payload with transcript and trade details
+                    payload = self.build_payload(call_record)
+
+                    # Skip if no transcript
+                    if not payload['text']:
+                        logger.warning("no_transcript_skipping", file=call_record['audioName'])
+                        return False
+
+                    # Call NLP API
+                    response = await self.call_nlp_api(payload)
+
+                    # Process response
+                    self.process_response(call_record, response)
+                    return True
+
+                except Exception as e:
+                    logger.error("llm1_processing_failed",
+                               file=call_record['audioName'],
+                               error=str(e))
+                    return False
+
+        # Create tasks for all calls
+        tasks = [process_single_call(record) for record in call_records]
+
+        # Execute all in parallel (with concurrency limit)
+        logger.info("llm1_processing_parallel", max_concurrent=max_concurrent)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Count successes and failures
+        successful = sum(1 for result in results if result is True)
+        failed = sum(1 for result in results if result is False or isinstance(result, Exception))
+
         logger.info("llm1_stage_completed", successful=successful, failed=failed)

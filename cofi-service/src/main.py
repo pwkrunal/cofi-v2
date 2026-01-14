@@ -100,28 +100,59 @@ class CofiOrchestrator:
         # Distribute to GPUs
         distribution = self.file_manager.distribute_files_to_gpus(batch_files.audio_files)
 
-        # Upload files to GPUs and save to DB
-        uploaded_count = 0
-        failed_count = 0
-        for gpu_ip, file_paths in distribution.items():
-            for file_path in file_paths:
-                file_name = self.file_manager.get_file_name(file_path)
+        # Get audit form ID once (used for all calls)
+        audit_form_id = self.process_repo.get_audit_form_id(self.settings.process_id)
 
+        # Upload files to GPUs in parallel
+        async def upload_and_record(gpu_ip: str, file_path: str):
+            """Upload a single file and create records."""
+            file_name = self.file_manager.get_file_name(file_path)
+
+            try:
                 # Upload file to GPU
-                try:
-                    EventLogger.file_start(batch_id, 'file_distribution', file_name, gpu_ip)
-                    await self.mediator.upload_file(gpu_ip, file_path, file_name)
-                    EventLogger.file_complete(batch_id, 'file_distribution', file_name, gpu_ip,
-                                            response={'uploaded': True, 'size': 'N/A'}, status='success')
-                    uploaded_count += 1
-                except Exception as e:
-                    logger.error("file_upload_failed", file=file_name, gpu=gpu_ip, error=str(e))
-                    EventLogger.file_error(batch_id, 'file_distribution', file_name, str(e), gpu_ip)
-                    failed_count += 1
-                    continue
+                EventLogger.file_start(batch_id, 'file_distribution', file_name, gpu_ip)
+                await self.mediator.upload_file(gpu_ip, file_path, file_name)
+                EventLogger.file_complete(batch_id, 'file_distribution', file_name, gpu_ip,
+                                        response={'uploaded': True, 'size': 'N/A'}, status='success')
 
                 # Create file distribution record
                 self.file_dist_repo.insert(file_name, gpu_ip, batch_id)
+
+                # Create call record (language info will be updated after LID stage)
+                try:
+                    self.call_repo.insert_from_distribution(
+                        audio_name=file_name,
+                        batch_id=batch_id,
+                        ip=gpu_ip,
+                        process_id=self.settings.process_id,
+                        category_mapping_id=self.settings.category_mapping_id,
+                        audio_endpoint=self.settings.audio_endpoint,
+                        audit_form_id=audit_form_id
+                    )
+                    logger.info("call_record_created", file=file_name, batch_id=batch_id)
+                except Exception as e:
+                    logger.error("call_record_creation_failed", file=file_name, error=str(e))
+
+                return True, file_name
+            except Exception as e:
+                logger.error("file_upload_failed", file=file_name, gpu=gpu_ip, error=str(e))
+                EventLogger.file_error(batch_id, 'file_distribution', file_name, str(e), gpu_ip)
+                return False, file_name
+
+        # Create upload tasks for all files across all GPUs
+        upload_tasks = []
+        for gpu_ip, file_paths in distribution.items():
+            for file_path in file_paths:
+                task = upload_and_record(gpu_ip, file_path)
+                upload_tasks.append(task)
+
+        # Execute all uploads in parallel
+        logger.info("uploading_files_parallel", total_tasks=len(upload_tasks))
+        results = await asyncio.gather(*upload_tasks, return_exceptions=False)
+
+        # Count successes and failures
+        uploaded_count = sum(1 for success, _ in results if success)
+        failed_count = sum(1 for success, _ in results if not success)
 
         # Update batch status
         self.batch_repo.update_total_files(batch_id, len(batch_files.audio_files))
@@ -133,43 +164,35 @@ class CofiOrchestrator:
         logger.info("files_distributed", total=len(batch_files.audio_files))
         return True
     
-    def insert_calls_from_lid(self, batch_id: int):
-        """Create Call records from LidStatus data with all required fields."""
-        EventLogger.info(batch_id, 'lid', 'Creating call records from LID results')
+    def update_calls_from_lid(self, batch_id: int):
+        """Update Call records with language info from LID results."""
+        EventLogger.info(batch_id, 'lid', 'Updating call records with LID results')
 
         lid_records = self.lid_repo.get_by_batch(batch_id)
 
-        # Get auditFormId from process table
-        audit_form_id = self.process_repo.get_audit_form_id(self.settings.process_id)
-
-        created_count = 0
+        updated_count = 0
         for record in lid_records:
-            # Check if call already exists
-            existing = self.call_repo.get_by_audio_name(record['file'], batch_id)
-            if existing:
-                continue
-
             # Get language ID
             lang_code = record.get('language', 'unknown')
             lang_record = self.language_repo.get_by_code(lang_code)
             language_id = lang_record['id'] if lang_record else None
 
-            # Create call record
-            self.call_repo.insert(
-                audio_name=record['file'],
-                lang=lang_code,
-                language_id=language_id,
-                batch_id=batch_id,
-                process_id=self.settings.process_id,
-                category_mapping_id=self.settings.category_mapping_id,
-                audio_endpoint=self.settings.audio_endpoint,
-                audio_duration=record.get('duration', 0),
-                audit_form_id=audit_form_id
-            )
-            created_count += 1
+            # Update existing call record with language info and duration
+            try:
+                self.call_repo.update_lid_info(
+                    audio_name=record['file'],
+                    batch_id=batch_id,
+                    language_id=language_id,
+                    lang_code=lang_code,
+                    audio_duration=record.get('duration', 0)
+                )
+                updated_count += 1
+            except Exception as e:
+                logger.error("call_lid_update_failed", file=record['file'], error=str(e))
 
-        EventLogger.info(batch_id, 'lid', f'Created {created_count} call records', metadata={'created': created_count})
-        logger.info("calls_created_from_lid", count=len(lid_records))
+        EventLogger.info(batch_id, 'lid', f'Updated {updated_count} call records with LID data',
+                        metadata={'updated': updated_count})
+        logger.info("calls_updated_from_lid", count=updated_count)
     
     def update_batch_status(self, batch_id: int, status: str):
         """Update batch status."""
@@ -265,8 +288,8 @@ class CofiOrchestrator:
         else:
             logger.info("lid_stage_already_complete")
         
-        # Create Call records from LID results
-        self.insert_calls_from_lid(batch_id)
+        # Update Call records with LID results (language and duration)
+        self.update_calls_from_lid(batch_id)
         
         # Stage: Rule Engine Step 1 - Trade to Audio Mapping (optional)
         if self.settings.rule_engine_enabled:
