@@ -5,6 +5,7 @@ import structlog
 from .base import PipelineStage
 from ..config import get_settings
 from ..database import CallRepo, TranscriptRepo, LanguageRepo, get_database
+from ..webhook_client import get_webhook_client
 
 logger = structlog.get_logger()
 
@@ -151,11 +152,29 @@ class STTStage(PipelineStage):
             # Update call status
             self.call_repo.update_status(file_name, "Pending", "TranscriptDone")
             logger.info("stt_status_updated", file=file_name, new_status="TranscriptDone")
-            
+
+            # Send webhook notification
+            if file_name in self._call_cache:
+                call_id = self._call_cache[file_name]['id']
+                try:
+                    webhook_client = get_webhook_client()
+                    webhook_client.notify_call_status(call_id, "TranscriptDone")
+                except Exception as webhook_err:
+                    logger.error("webhook_failed", call_id=call_id, status="TranscriptDone", error=str(webhook_err))
+
         except Exception as e:
             logger.error("stt_response_processing_failed", file=file_name, error=str(e))
             # Still update status to avoid reprocessing
             self.call_repo.update_status(file_name, "Pending", "TranscriptDone")
+
+            # Send webhook notification even on error
+            if file_name in self._call_cache:
+                call_id = self._call_cache[file_name]['id']
+                try:
+                    webhook_client = get_webhook_client()
+                    webhook_client.notify_call_status(call_id, "TranscriptDone")
+                except Exception as webhook_err:
+                    logger.error("webhook_failed", call_id=call_id, status="TranscriptDone", error=str(webhook_err))
     
     def get_pending_files(self, batch_id: int) -> Dict[str, List[str]]:
         """
@@ -184,9 +203,17 @@ class STTStage(PipelineStage):
             if audio_duration < 5:
                 # Mark as ShortCall and skip
                 self.call_repo.update_status(audio_name, "Pending", "ShortCall")
-                logger.info("short_call_skipped", 
-                           file=audio_name, 
+                logger.info("short_call_skipped",
+                           file=audio_name,
                            duration=audio_duration)
+
+                # Send webhook notification
+                try:
+                    webhook_client = get_webhook_client()
+                    webhook_client.notify_call_status(record['id'], "ShortCall")
+                except Exception as webhook_err:
+                    logger.error("webhook_failed", call_id=record['id'], status="ShortCall", error=str(webhook_err))
+
                 short_call_count += 1
                 continue
             
@@ -194,9 +221,17 @@ class STTStage(PipelineStage):
             if language not in supported_languages:
                 # Mark as UnsupportedLanguage and skip
                 self.call_repo.update_status(audio_name, "Pending", "UnsupportedLanguage")
-                logger.info("unsupported_language_skipped", 
-                           file=audio_name, 
+                logger.info("unsupported_language_skipped",
+                           file=audio_name,
                            language=language)
+
+                # Send webhook notification
+                try:
+                    webhook_client = get_webhook_client()
+                    webhook_client.notify_call_status(record['id'], "UnsupportedLanguage")
+                except Exception as webhook_err:
+                    logger.error("webhook_failed", call_id=record['id'], status="UnsupportedLanguage", error=str(webhook_err))
+
                 unsupported_count += 1
                 continue
             

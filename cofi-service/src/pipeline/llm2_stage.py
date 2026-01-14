@@ -7,6 +7,7 @@ import structlog
 from ..config import get_settings
 from ..database import CallRepo, TranscriptRepo, get_database
 from ..mediator_client import MediatorClient
+from ..webhook_client import get_webhook_client
 from .llm2_custom_rules import CustomRuleExecutor
 
 logger = structlog.get_logger()
@@ -450,10 +451,18 @@ class LLM2Stage:
                 
                 # Update call status
                 self.call_repo.update_status(
-                    call_record['audioName'], 
-                    "AuditDone", 
+                    call_record['audioName'],
+                    "AuditDone",
                     "Complete"
                 )
+
+                # Send webhook notification
+                try:
+                    webhook_client = get_webhook_client()
+                    webhook_client.notify_call_status(call_record['id'], "Complete")
+                except Exception as webhook_err:
+                    logger.error("webhook_failed", call_id=call_record['id'], status="Complete", error=str(webhook_err))
+
                 successful += 1
                 
             except Exception as e:

@@ -74,7 +74,10 @@ class Settings(BaseSettings):
     mysql_user: str = Field(default="root")
     mysql_password: str = Field(default="password")
     mysql_database: str = Field(default="testDb")
-    
+
+    # External Audit Server Webhook
+    audit_server_url: str = Field(default="http://localhost:8000", description="External audit server URL for webhooks")
+
     # LLM2 Skip Questions
     llm2_skip_questions: str = Field(default="", description="Comma-separated list of question names to skip in LLM2")
     llm2_na_questions: str = Field(default="", description="Comma-separated list of question names to mark as NA in LLM2")

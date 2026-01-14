@@ -6,6 +6,7 @@ import structlog
 
 from ..config import get_settings
 from ..database import CallRepo, TranscriptRepo, get_database
+from ..webhook_client import get_webhook_client
 
 logger = structlog.get_logger()
 
@@ -275,6 +276,13 @@ class LLM1Stage:
         # Update call status
         self.call_repo.update_status(audio_name, "TranscriptDone", "AuditDone")
         logger.info("llm1_status_updated", file=audio_name, new_status="AuditDone")
+
+        # Send webhook notification
+        try:
+            webhook_client = get_webhook_client()
+            webhook_client.notify_call_status(call_id, "AuditDone")
+        except Exception as webhook_err:
+            logger.error("webhook_failed", call_id=call_id, status="AuditDone", error=str(webhook_err))
     
     async def execute(self, batch_id: int, previous_container: Optional[str] = None):
         """
