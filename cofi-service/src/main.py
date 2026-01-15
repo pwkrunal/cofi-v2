@@ -1,12 +1,14 @@
 """Main entry point for cofi-service - the CPU orchestrator."""
 import asyncio
 import structlog
+import time
 
 from .config import get_settings
 from .database import get_database, BatchStatusRepo, FileDistributionRepo, LidStatusRepo, CallRepo, LanguageRepo, ProcessRepo
 from .file_manager import FileManager
 from .metadata_manager import MetadataManager
 from .rule_engine import RuleEngineStep1
+from .rule_engine_step2 import process_rule_engine
 from .mediator_client import MediatorClient
 from .pipeline.denoise_stage import DenoiseStage
 from .pipeline.ivr_stage import IVRStage
@@ -388,10 +390,28 @@ class CofiOrchestrator:
             if batch.get('triagingStep2Status') != 'Complete':
                 logger.info("rule_engine_step2_starting")
                 self.batch_repo.set_stage_start_time(batch_id, "triaging_step2")
-                # TODO: Add Rule Engine Step 2 implementation here
-                self.batch_repo.update_triaging_step2_status(batch_id, "Complete")
-                self.batch_repo.set_stage_end_time(batch_id, "triaging_step2")
-                logger.info("rule_engine_step2_done")
+                EventLogger.stage_start(batch_id, 'triaging_step2', metadata={
+                    'batch_date': self.settings.batch_date
+                })
+                start_time = time.perf_counter()
+                try:
+                    result = process_rule_engine(self.settings.batch_date, batch_id)
+                    duration = time.perf_counter() - start_time
+                    logger.info("rule_engine_step2_completed", batch_id=batch_id, duration_seconds=duration, result=result)
+                    EventLogger.stage_complete(
+                        batch_id,
+                        'triaging_step2',
+                        1,
+                        0,
+                        metadata={'duration_seconds': duration}
+                    )
+                except Exception as e:
+                    logger.error("rule_engine_step2_failed", batch_id=batch_id, error=str(e))
+                    EventLogger.file_error(batch_id, 'triaging_step2', 'rule_engine_step2', str(e))
+                finally:
+                    self.batch_repo.update_triaging_step2_status(batch_id, "Complete")
+                    self.batch_repo.set_stage_end_time(batch_id, "triaging_step2")
+                    logger.info("rule_engine_step2_done")
             else:
                 logger.info("rule_engine_step2_already_complete")
         else:
