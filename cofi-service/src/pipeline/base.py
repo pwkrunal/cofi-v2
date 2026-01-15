@@ -6,21 +6,11 @@ import structlog
 
 import json
 from ..config import get_settings
-from ..database import get_database, FileDistributionRepo, ProcessingLogRepo
+from ..database import get_database, FileDistributionRepo
 from ..mediator_client import MediatorClient
 from ..event_logger import EventLogger
 
 logger = structlog.get_logger()
-
-
-def _safe_json_serialize(data: Any) -> Optional[str]:
-    """Safely serialize data to JSON string, returning None on failure."""
-    if data is None:
-        return None
-    try:
-        return json.dumps(data, default=str)
-    except (TypeError, ValueError):
-        return str(data)
 
 
 class PipelineStage(ABC):
@@ -40,60 +30,7 @@ class PipelineStage(ABC):
         self.mediator = MediatorClient()
         self.db = get_database()
         self.file_dist_repo = FileDistributionRepo(self.db)
-        self.processing_log_repo = ProcessingLogRepo(self.db)
 
-    def _get_request_url(self, gpu_ip: str) -> str:
-        """Build full request URL for logging."""
-        return f"http://{gpu_ip}:{self.settings.mediator_port}/{self.api_endpoint}"
-
-    def log_processing_failure(
-        self,
-        call_id: str,
-        batch_id: int,
-        gpu_ip: str,
-        error_message: str,
-        input_payload: Optional[Dict] = None,
-        output_payload: Optional[Dict] = None
-    ):
-        """Log failed processing to processing_logs table."""
-        if not self.processing_log_stage:
-            return  # Skip if stage not configured for processing logs
-        try:
-            self.processing_log_repo.log_failure(
-                call_id=call_id,
-                batch_id=str(batch_id),
-                stage_name=self.processing_log_stage,
-                error_message=error_message,
-                request_url=self._get_request_url(gpu_ip),
-                input_payload=_safe_json_serialize(input_payload),
-                output_payload=_safe_json_serialize(output_payload)
-            )
-        except Exception as e:
-            logger.error("processing_log_failed", stage=self.stage_name, call_id=call_id, error=str(e))
-
-    def log_processing_success(
-        self,
-        call_id: str,
-        batch_id: int,
-        gpu_ip: str,
-        input_payload: Optional[Dict] = None,
-        output_payload: Optional[Dict] = None
-    ):
-        """Log successful processing to processing_logs table."""
-        if not self.processing_log_stage:
-            return  # Skip if stage not configured for processing logs
-        try:
-            self.processing_log_repo.log_success(
-                call_id=call_id,
-                batch_id=str(batch_id),
-                stage_name=self.processing_log_stage,
-                request_url=self._get_request_url(gpu_ip),
-                input_payload=_safe_json_serialize(input_payload),
-                output_payload=_safe_json_serialize(output_payload)
-            )
-        except Exception as e:
-            logger.error("processing_log_success_failed", stage=self.stage_name, call_id=call_id, error=str(e))
-    
     @abstractmethod
     def build_payload(self, file_name: str) -> Dict[str, Any]:
         """Build API request payload for a file."""
@@ -201,28 +138,10 @@ class PipelineStage(ABC):
 
             if isinstance(result, Exception):
                 logger.error("file_processing_failed", file=file_name, error=str(result))
-                EventLogger.file_error(batch_id, self.stage_name, file_name, str(result), gpu_ip)
-                # Log failure to processing_logs - continues without stopping
-                self.log_processing_failure(
-                    call_id=file_name,
-                    batch_id=batch_id,
-                    gpu_ip=gpu_ip or "",
-                    error_message=str(result),
-                    input_payload=payload
-                )
+                EventLogger.file_error(batch_id, self.stage_name, file_name, str(result), gpu_ip, payload=payload)
             else:
                 # Log file complete (with response)
                 EventLogger.file_complete(batch_id, self.stage_name, file_name, gpu_ip, result, status='success')
-
-                # Log success to processing_logs
-                self.log_processing_success(
-                    call_id=file_name,
-                    batch_id=batch_id,
-                    gpu_ip=gpu_ip or "",
-                    input_payload=payload,
-                    output_payload=result
-                )
-
                 self.process_response(file_name, result, gpu_ip, batch_id)
                 successful_files.append(file_name)
 

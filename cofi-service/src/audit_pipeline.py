@@ -6,7 +6,7 @@ import structlog
 from pathlib import Path
 
 from .config import get_settings
-from .database import get_database, BatchStatusRepo, FileDistributionRepo, CallRepo, LidStatusRepo, LanguageRepo, ProcessRepo, ProcessingLogRepo
+from .database import get_database, BatchStatusRepo, FileDistributionRepo, CallRepo, LidStatusRepo, LanguageRepo, ProcessRepo
 from .file_manager import FileManager
 from .mediator_client import MediatorClient
 from .event_logger import EventLogger
@@ -49,7 +49,6 @@ class AuditPipeline:
         self.lid_repo = LidStatusRepo(self.db)
         self.language_repo = LanguageRepo(self.db)
         self.process_repo = ProcessRepo(self.db)
-        self.processing_log_repo = ProcessingLogRepo(self.db)
     
     async def process(self, file_names: List[str], upload_dir: str):
         """
@@ -152,17 +151,8 @@ class AuditPipeline:
                 return True
             except Exception as e:
                 logger.error("file_distribution_failed", file=file_name, error=str(e), task_id=self.task_id)
-                EventLogger.file_error(batch_id, 'file_distribution', file_name, str(e), gpu_ip)
-                
-                # Log failure to processing_logs
-                self.processing_log_repo.log_failure(
-                    call_id=file_name,
-                    batch_id=str(batch_id),
-                    stage_name="file_distribution",
-                    error_message=str(e),
-                    request_url=f"GPU: {gpu_ip}",
-                    input_payload=json.dumps({"file": file_name, "gpu": gpu_ip, "task_id": self.task_id})
-                )
+                EventLogger.file_error(batch_id, 'file_distribution', file_name, str(e), gpu_ip,
+                                     payload={"file": file_name, "gpu": gpu_ip, "task_id": self.task_id})
                 return False
 
         # Create upload tasks for all files (round-robin distribution)

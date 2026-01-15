@@ -6,23 +6,13 @@ import json
 import structlog
 
 from ..config import get_settings
-from ..database import CallRepo, TranscriptRepo, ProcessingLogRepo, FileDistributionRepo, get_database
+from ..database import CallRepo, TranscriptRepo, FileDistributionRepo, get_database
 from ..mediator_client import MediatorClient
 from ..webhook_client import get_webhook_client
 from ..event_logger import EventLogger
 from .llm2_custom_rules import CustomRuleExecutor
 
 logger = structlog.get_logger()
-
-
-def _safe_json_serialize(data: Any) -> Optional[str]:
-    """Safely serialize data to JSON string, returning None on failure."""
-    if data is None:
-        return None
-    try:
-        return json.dumps(data, default=str)
-    except (TypeError, ValueError):
-        return str(data)
 
 
 class AuditFormRepo:
@@ -137,7 +127,6 @@ class LLM2Stage:
         self.transcript_repo = TranscriptRepo(self.db)
         self.audit_form_repo = AuditFormRepo(self.db)
         self.audit_answer_repo = AuditAnswerRepo(self.db)
-        self.processing_log_repo = ProcessingLogRepo(self.db)
         self.file_dist_repo = FileDistributionRepo(self.db)
         self.mediator = MediatorClient()
 
@@ -159,28 +148,6 @@ class LLM2Stage:
         # Build full API URL
         self.api_url = f"{self.settings.nlp_api_q2}/extract_information"
         self.timeout = aiohttp.ClientTimeout(total=600)
-
-    def log_processing_failure(
-        self,
-        call_id: str,
-        batch_id: int,
-        error_message: str,
-        input_payload: Optional[Dict] = None,
-        output_payload: Optional[Dict] = None
-    ):
-        """Log failed processing to processing_logs table."""
-        try:
-            self.processing_log_repo.log_failure(
-                call_id=call_id,
-                batch_id=str(batch_id),
-                stage_name=self.processing_log_stage,
-                error_message=error_message,
-                request_url=self.api_url,
-                input_payload=_safe_json_serialize(input_payload),
-                output_payload=_safe_json_serialize(output_payload)
-            )
-        except Exception as e:
-            logger.error("processing_log_failed", stage=self.stage_name, call_id=call_id, error=str(e))
     
     def _get_transcript_text(self, call_id: int) -> str:
         """Get concatenated transcript text for a call."""
@@ -520,14 +487,8 @@ class LLM2Stage:
                     logger.error("llm2_call_processing_failed",
                                call_id=call_record['id'],
                                error=str(e))
-                    # Log failure to processing_logs - continues without stopping
-                    self.log_processing_failure(
-                        call_id=audio_name,
-                        batch_id=batch_id,
-                        error_message=str(e),
-                        input_payload={"call_id": call_record['id'], "audio_name": audio_name}
-                    )
-                    EventLogger.file_error(batch_id, 'llm2', audio_name, str(e))
+                    EventLogger.file_error(batch_id, 'llm2', audio_name, str(e), 
+                                         payload={"call_id": call_record['id'], "audio_name": audio_name})
                     return False, audio_name
 
         # Create tasks for all calls
