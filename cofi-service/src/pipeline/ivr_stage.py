@@ -7,9 +7,10 @@ from ..config import get_settings
 
 class IVRStage(PipelineStage):
     """IVR detection and cleaning stage."""
-    
+
     stage_name = "IVR"
     status_column = "ivrDone"
+    processing_log_stage = "ivr"  # For processing_logs table
     
     def __init__(self):
         super().__init__()

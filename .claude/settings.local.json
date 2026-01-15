@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir \"C:\\\\Users\\\\kruna\\\\auditnex-cofi-2026\" /b)"
+    ]
+  }
+}

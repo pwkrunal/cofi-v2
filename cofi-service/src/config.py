@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     mediator_port: int = Field(default=5065, description="Mediator service port")
     
     # Service Ports
+    denoise_port: int = Field(default=5010, description="Denoise service port")
     ivr_port: int = Field(default=4080, description="IVR service port")
     lid_port: int = Field(default=4070, description="LID service port")
     stt_port: int = Field(default=4030, description="STT service port")

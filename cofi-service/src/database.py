@@ -215,8 +215,8 @@ class FileDistributionRepo:
     def insert(self, file_name: str, ip: str, batch_id: int) -> int:
         """Insert a new file distribution record."""
         query = """
-            INSERT INTO fileDistribution (file, ip, batchId, ivrDone, lidDone, sttDone, llm1Done, llm2Done)
-            VALUES (%s, %s, %s, 0, 0, 0, 0, 0)
+            INSERT INTO fileDistribution (file, ip, batchId, denoiseDone, ivrDone, lidDone, sttDone, llm1Done, llm2Done)
+            VALUES (%s, %s, %s, 0, 0, 0, 0, 0, 0)
         """
         return self.db.execute_insert(query, (file_name, ip, batch_id))
     
@@ -467,6 +467,128 @@ class TranscriptRepo:
         """Delete all transcripts for a call (for reaudit)."""
         query = "DELETE FROM transcript WHERE callId = %s"
         return self.db.execute_update(query, (call_id,))
+
+
+class ProcessingLogRepo:
+    """Repository for processing_logs table operations.
+
+    Logs processing errors/failures for each pipeline stage
+    without stopping execution.
+    """
+
+    def __init__(self, db: Database):
+        self.db = db
+
+    def log_failure(
+        self,
+        call_id: str,
+        batch_id: str,
+        stage_name: str,
+        error_message: str,
+        request_url: Optional[str] = None,
+        input_payload: Optional[str] = None,
+        output_payload: Optional[str] = None
+    ) -> int:
+        """
+        Log a failed processing result for a file at a specific stage.
+
+        Args:
+            call_id: Audio file identifier (file name)
+            batch_id: Batch ID
+            stage_name: One of: denoise, trademeta, callmeta, ivr, lid, stt, llm1, llm2
+            error_message: Error message describing the failure
+            request_url: API endpoint URL called
+            input_payload: JSON string of request payload
+            output_payload: JSON string of response data (if any)
+
+        Returns:
+            Inserted log ID
+        """
+        query = """
+            INSERT INTO processing_logs (
+                call_id, batch_id, stage_name, request_url,
+                input_payload, output_payload, status, error_message
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        return self.db.execute_insert(query, (
+            call_id, str(batch_id), stage_name, request_url,
+            input_payload, output_payload, 'failed', error_message
+        ))
+
+    def log_success(
+        self,
+        call_id: str,
+        batch_id: str,
+        stage_name: str,
+        request_url: Optional[str] = None,
+        input_payload: Optional[str] = None,
+        output_payload: Optional[str] = None
+    ) -> int:
+        """
+        Log a successful processing result for a file at a specific stage.
+
+        Args:
+            call_id: Audio file identifier (file name)
+            batch_id: Batch ID
+            stage_name: One of: denoise, trademeta, callmeta, ivr, lid, stt, llm1, llm2
+            request_url: API endpoint URL called
+            input_payload: JSON string of request payload
+            output_payload: JSON string of response data
+
+        Returns:
+            Inserted log ID
+        """
+        query = """
+            INSERT INTO processing_logs (
+                call_id, batch_id, stage_name, request_url,
+                input_payload, output_payload, status, error_message
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        return self.db.execute_insert(query, (
+            call_id, str(batch_id), stage_name, request_url,
+            input_payload, output_payload, 'success', None
+        ))
+
+    def get_by_batch(self, batch_id: str, limit: int = 1000) -> List[Dict]:
+        """Get all processing logs for a batch."""
+        query = """
+            SELECT * FROM processing_logs
+            WHERE batch_id = %s
+            ORDER BY created_at DESC
+            LIMIT %s
+        """
+        return self.db.execute_query(query, (str(batch_id), limit))
+
+    def get_by_call(self, call_id: str) -> List[Dict]:
+        """Get all processing logs for a specific call/file."""
+        query = """
+            SELECT * FROM processing_logs
+            WHERE call_id = %s
+            ORDER BY created_at ASC
+        """
+        return self.db.execute_query(query, (call_id,))
+
+    def get_by_stage(self, batch_id: str, stage_name: str, limit: int = 1000) -> List[Dict]:
+        """Get all error logs for a specific stage in a batch."""
+        query = """
+            SELECT * FROM processing_logs
+            WHERE batch_id = %s AND stage_name = %s
+            ORDER BY created_at DESC
+            LIMIT %s
+        """
+        return self.db.execute_query(query, (str(batch_id), stage_name, limit))
+
+    def get_stage_summary(self, batch_id: str) -> List[Dict]:
+        """Get failure counts per stage for a batch."""
+        query = """
+            SELECT
+                stage_name,
+                COUNT(*) as failed_count
+            FROM processing_logs
+            WHERE batch_id = %s
+            GROUP BY stage_name
+        """
+        return self.db.execute_query(query, (str(batch_id),))
 
 
 class BatchExecutionLogRepo:

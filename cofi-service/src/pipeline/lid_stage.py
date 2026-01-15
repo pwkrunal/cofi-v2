@@ -11,9 +11,10 @@ logger = structlog.get_logger()
 
 class LIDStage(PipelineStage):
     """Language identification stage."""
-    
+
     stage_name = "LID"
     status_column = "lidDone"
+    processing_log_stage = "lid"  # For processing_logs table
     
     def __init__(self):
         super().__init__()

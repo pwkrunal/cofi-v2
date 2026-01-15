@@ -2,15 +2,27 @@
 from typing import Dict, Any, List, Optional
 import aiohttp
 import asyncio
+import json
 import structlog
 
 from ..config import get_settings
-from ..database import CallRepo, TranscriptRepo, get_database
+from ..database import CallRepo, TranscriptRepo, ProcessingLogRepo, FileDistributionRepo, get_database
 from ..mediator_client import MediatorClient
 from ..webhook_client import get_webhook_client
+from ..event_logger import EventLogger
 from .llm2_custom_rules import CustomRuleExecutor
 
 logger = structlog.get_logger()
+
+
+def _safe_json_serialize(data: Any) -> Optional[str]:
+    """Safely serialize data to JSON string, returning None on failure."""
+    if data is None:
+        return None
+    try:
+        return json.dumps(data, default=str)
+    except (TypeError, ValueError):
+        return str(data)
 
 
 class AuditFormRepo:
@@ -106,7 +118,7 @@ class AuditAnswerRepo:
 class LLM2Stage:
     """
     Second LLM extraction stage - Audit Question Answering.
-    
+
     Workflow:
     1. Query audit form questions
     2. Classify conversation as 'trade' or 'non-trade'
@@ -114,9 +126,10 @@ class LLM2Stage:
     4. If trade: call NLP API for each question and store answer
     5. Insert all answers into auditAnswer table
     """
-    
+
     stage_name = "LLM2"
-    
+    processing_log_stage = "llm2"  # For processing_logs table
+
     def __init__(self):
         self.settings = get_settings()
         self.db = get_database()
@@ -124,8 +137,10 @@ class LLM2Stage:
         self.transcript_repo = TranscriptRepo(self.db)
         self.audit_form_repo = AuditFormRepo(self.db)
         self.audit_answer_repo = AuditAnswerRepo(self.db)
+        self.processing_log_repo = ProcessingLogRepo(self.db)
+        self.file_dist_repo = FileDistributionRepo(self.db)
         self.mediator = MediatorClient()
-        
+
         # Answer mappings for normalizing NLP responses
         self.answer_mappings = {
             'yes': 'YES',
@@ -137,13 +152,35 @@ class LLM2Stage:
             'anger': 'YES',
             'disgust': 'YES'
         }
-        
+
         # Custom rules for client-specific questions
         self.custom_rules = CustomRuleExecutor(self.db, self)
-        
+
         # Build full API URL
         self.api_url = f"{self.settings.nlp_api_q2}/extract_information"
         self.timeout = aiohttp.ClientTimeout(total=600)
+
+    def log_processing_failure(
+        self,
+        call_id: str,
+        batch_id: int,
+        error_message: str,
+        input_payload: Optional[Dict] = None,
+        output_payload: Optional[Dict] = None
+    ):
+        """Log failed processing to processing_logs table."""
+        try:
+            self.processing_log_repo.log_failure(
+                call_id=call_id,
+                batch_id=str(batch_id),
+                stage_name=self.processing_log_stage,
+                error_message=error_message,
+                request_url=self.api_url,
+                input_payload=_safe_json_serialize(input_payload),
+                output_payload=_safe_json_serialize(output_payload)
+            )
+        except Exception as e:
+            logger.error("processing_log_failed", stage=self.stage_name, call_id=call_id, error=str(e))
     
     def _get_transcript_text(self, call_id: int) -> str:
         """Get concatenated transcript text for a call."""
@@ -440,7 +477,14 @@ class LLM2Stage:
             logger.info("no_pending_calls_for_llm2")
             return
 
-        logger.info("calls_to_process", count=len(call_records))
+        total_files = len(call_records)
+        logger.info("calls_to_process", count=total_files)
+
+        # Log stage start
+        EventLogger.stage_start(batch_id, 'llm2', total_files=total_files, metadata={
+            'api_url': self.api_url,
+            'max_concurrent': len(self.settings.gpu_machine_list)
+        })
 
         # Semaphore to limit concurrent API calls based on GPU count
         max_concurrent = len(self.settings.gpu_machine_list)
@@ -449,12 +493,15 @@ class LLM2Stage:
         async def process_single_call(call_record):
             """Process a single call with concurrency limit."""
             async with semaphore:
+                audio_name = call_record['audioName']
+                batch_id = call_record['batchId']
+
                 try:
                     await self.process_call(call_record)
 
                     # Update call status
                     self.call_repo.update_status(
-                        call_record['audioName'],
+                        audio_name,
                         "AuditDone",
                         "Complete"
                     )
@@ -466,13 +513,22 @@ class LLM2Stage:
                     except Exception as webhook_err:
                         logger.error("webhook_failed", call_id=call_record['id'], status="Complete", error=str(webhook_err))
 
-                    return True
+                    EventLogger.file_complete(batch_id, 'llm2', audio_name, status='success')
+                    return True, audio_name
 
                 except Exception as e:
                     logger.error("llm2_call_processing_failed",
                                call_id=call_record['id'],
                                error=str(e))
-                    return False
+                    # Log failure to processing_logs - continues without stopping
+                    self.log_processing_failure(
+                        call_id=audio_name,
+                        batch_id=batch_id,
+                        error_message=str(e),
+                        input_payload={"call_id": call_record['id'], "audio_name": audio_name}
+                    )
+                    EventLogger.file_error(batch_id, 'llm2', audio_name, str(e))
+                    return False, audio_name
 
         # Create tasks for all calls
         tasks = [process_single_call(record) for record in call_records]
@@ -481,8 +537,30 @@ class LLM2Stage:
         logger.info("llm2_processing_parallel", max_concurrent=max_concurrent)
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Count successes and failures
-        successful = sum(1 for result in results if result is True)
-        failed = sum(1 for result in results if result is False or isinstance(result, Exception))
+        # Count successes and track successful files
+        successful_files = []
+        failed = 0
+        
+        for result in results:
+            if isinstance(result, Exception):
+                failed += 1
+            elif isinstance(result, tuple):
+                success, audio_name = result
+                if success:
+                    successful_files.append(audio_name)
+                else:
+                    failed += 1
+
+        successful = len(successful_files)
+
+        # Mark successful files as complete in fileDistribution
+        if successful_files:
+            self.file_dist_repo.mark_stage_done(successful_files, batch_id, 'llm2Done')
+            logger.info("files_marked_llm2_complete", count=len(successful_files))
+
+        # Log stage complete
+        EventLogger.stage_complete(batch_id, 'llm2', successful, failed, metadata={
+            'total_files': total_files
+        })
 
         logger.info("llm2_stage_completed", successful=successful, failed=failed)

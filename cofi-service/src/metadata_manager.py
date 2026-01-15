@@ -8,9 +8,19 @@ import json
 import os
 
 from .config import get_settings
-from .database import get_database
+from .database import get_database, ProcessingLogRepo
 
 logger = structlog.get_logger()
+
+
+def _safe_json_serialize(data: Any) -> Optional[str]:
+    """Safely serialize data to JSON string, returning None on failure."""
+    if data is None:
+        return None
+    try:
+        return json.dumps(data, default=str)
+    except (TypeError, ValueError):
+        return str(data)
 
 
 # Column mapping from CSV to database (from api_definations.json)
@@ -219,12 +229,33 @@ class TradeMetadataRepo:
 
 class MetadataManager:
     """Manages metadata file processing and database upload."""
-    
+
     def __init__(self):
         self.settings = get_settings()
         self.db = get_database()
         self.call_metadata_repo = CallMetadataRepo(self.db)
         self.trade_metadata_repo = TradeMetadataRepo(self.db)
+        self.processing_log_repo = ProcessingLogRepo(self.db)
+
+    def log_processing_failure(
+        self,
+        stage_name: str,
+        batch_id: int,
+        csv_path: str,
+        error_message: str
+    ):
+        """Log failed metadata processing to processing_logs table."""
+        try:
+            self.processing_log_repo.log_failure(
+                call_id=f"batch_{batch_id}",
+                batch_id=str(batch_id),
+                stage_name=stage_name,
+                error_message=error_message,
+                request_url=csv_path,
+                input_payload=_safe_json_serialize({"csv_path": csv_path})
+            )
+        except Exception as e:
+            logger.error("processing_log_failed", stage=stage_name, batch_id=batch_id, error=str(e))
     
     def get_batch_directory(self) -> Path:
         """Get the batch directory path."""
@@ -245,8 +276,14 @@ class MetadataManager:
         
         if not csv_path.exists():
             logger.warning("callMetadata_csv_not_found", path=str(csv_path))
+            self.log_processing_failure(
+                stage_name="callmeta",
+                batch_id=batch_id,
+                csv_path=str(csv_path),
+                error_message="CSV file not found"
+            )
             return 0
-        
+
         try:
             # Read CSV file using pandas
             df = pd.read_csv(csv_path)
@@ -314,11 +351,17 @@ class MetadataManager:
                            total_so_far=total_inserted)
             
             logger.info("callMetadata_inserted", count=total_inserted, batch_id=batch_id)
-            
             return total_inserted
-            
+
         except Exception as e:
             logger.error("callMetadata_processing_failed", error=str(e))
+            # Log failure to processing_logs - continues without stopping
+            self.log_processing_failure(
+                stage_name="callmeta",
+                batch_id=batch_id,
+                csv_path=str(csv_path),
+                error_message=str(e)
+            )
             raise
     
     def process_trade_metadata_csv(self, batch_id: int) -> int:
@@ -336,8 +379,14 @@ class MetadataManager:
         
         if not csv_path.exists():
             logger.warning("tradeMetadata_csv_not_found", path=str(csv_path))
+            self.log_processing_failure(
+                stage_name="trademeta",
+                batch_id=batch_id,
+                csv_path=str(csv_path),
+                error_message="CSV file not found"
+            )
             return 0
-        
+
         try:
             # Read CSV file using pandas
             df = pd.read_csv(csv_path)
@@ -389,11 +438,17 @@ class MetadataManager:
                            total_so_far=total_inserted)
             
             logger.info("tradeMetadata_inserted", count=total_inserted, batch_id=batch_id)
-            
             return total_inserted
-            
+
         except Exception as e:
             logger.error("tradeMetadata_processing_failed", error=str(e))
+            # Log failure to processing_logs - continues without stopping
+            self.log_processing_failure(
+                stage_name="trademeta",
+                batch_id=batch_id,
+                csv_path=str(csv_path),
+                error_message=str(e)
+            )
             raise
     
     def is_call_metadata_processed(self, batch_id: int) -> bool:

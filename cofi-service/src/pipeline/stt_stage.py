@@ -12,9 +12,10 @@ logger = structlog.get_logger()
 
 class STTStage(PipelineStage):
     """Speech-to-text transcription stage."""
-    
+
     stage_name = "STT"
     status_column = "sttDone"
+    processing_log_stage = "stt"  # For processing_logs table
     
     def __init__(self):
         super().__init__()

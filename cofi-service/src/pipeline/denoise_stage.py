@@ -10,16 +10,17 @@ logger = structlog.get_logger()
 
 class DenoiseStage(PipelineStage):
     """Audio denoising stage."""
-    
+
     stage_name = "Denoise"
     status_column = "denoiseDone"
+    processing_log_stage = "denoise"  # For processing_logs table
     
     def __init__(self):
         super().__init__()
         settings = get_settings()
         self.container_name = None  # Denoise doesn't use GPU containers
         self.wait_seconds = 0  # No wait needed
-        self.api_port = 5010
+        self.api_port = settings.denoise_port
         self.api_endpoint = "/process"
     
     def build_payload(self, file_name: str) -> Dict[str, Any]:
