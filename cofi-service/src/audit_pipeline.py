@@ -1,12 +1,15 @@
 """Audit pipeline for processing uploaded files."""
 from typing import List, Dict, Any
+import asyncio
+import json
 import structlog
 from pathlib import Path
 
 from .config import get_settings
-from .database import get_database, BatchStatusRepo, FileDistributionRepo, CallRepo, LidStatusRepo, LanguageRepo, ProcessRepo
+from .database import get_database, BatchStatusRepo, FileDistributionRepo, CallRepo, LidStatusRepo, LanguageRepo, ProcessRepo, ProcessingLogRepo
 from .file_manager import FileManager
 from .mediator_client import MediatorClient
+from .event_logger import EventLogger
 from .pipeline.lid_stage import LIDStage
 from .pipeline.stt_stage import STTStage
 from .pipeline.llm1_stage import LLM1Stage
@@ -46,6 +49,7 @@ class AuditPipeline:
         self.lid_repo = LidStatusRepo(self.db)
         self.language_repo = LanguageRepo(self.db)
         self.process_repo = ProcessRepo(self.db)
+        self.processing_log_repo = ProcessingLogRepo(self.db)
     
     async def process(self, file_names: List[str], upload_dir: str):
         """
@@ -84,7 +88,10 @@ class AuditPipeline:
         else:
             logger.info("llm2_skipped", task_id=self.task_id)
         
-        logger.info("audit_pipeline_completed", task_id=self.task_id)
+        # Mark batch as completed
+        self.batch_repo.update_status(batch_id, "Completed")
+        
+        logger.info("audit_pipeline_completed", task_id=self.task_id, batch_id=batch_id)
     
     async def _create_audit_batch(self, file_names: List[str]) -> int:
         """Create a batch record for this audit."""
@@ -108,6 +115,12 @@ class AuditPipeline:
         """Distribute files to GPUs using round-robin in parallel."""
         gpu_list = self.settings.gpu_machine_list
 
+        # Log stage start
+        EventLogger.stage_start(batch_id, 'file_distribution', total_files=len(file_names), metadata={
+            'upload_dir': upload_dir,
+            'task_id': self.task_id
+        })
+
         # Get auditFormId once for all calls
         audit_form_id = self.process_repo.get_audit_form_id(self.process_id)
 
@@ -117,6 +130,7 @@ class AuditPipeline:
 
             try:
                 # Upload to GPU
+                EventLogger.file_start(batch_id, 'file_distribution', file_name, gpu_ip)
                 await self.mediator.upload_file(gpu_ip, str(file_path), file_name)
 
                 # Create file distribution record
@@ -133,10 +147,22 @@ class AuditPipeline:
                     audit_form_id=audit_form_id
                 )
 
+                EventLogger.file_complete(batch_id, 'file_distribution', file_name, gpu_ip, status='success')
                 logger.info("file_distributed", file=file_name, gpu=gpu_ip, task_id=self.task_id)
                 return True
             except Exception as e:
                 logger.error("file_distribution_failed", file=file_name, error=str(e), task_id=self.task_id)
+                EventLogger.file_error(batch_id, 'file_distribution', file_name, str(e), gpu_ip)
+                
+                # Log failure to processing_logs
+                self.processing_log_repo.log_failure(
+                    call_id=file_name,
+                    batch_id=str(batch_id),
+                    stage_name="file_distribution",
+                    error_message=str(e),
+                    request_url=f"GPU: {gpu_ip}",
+                    input_payload=json.dumps({"file": file_name, "gpu": gpu_ip, "task_id": self.task_id})
+                )
                 return False
 
         # Create upload tasks for all files (round-robin distribution)
@@ -146,21 +172,40 @@ class AuditPipeline:
             task = upload_and_record(file_name, gpu_ip)
             upload_tasks.append(task)
 
-        # Execute all uploads in parallel
+        # Execute all uploads in parallel with error handling
         logger.info("uploading_files_parallel", total_files=len(upload_tasks), task_id=self.task_id)
-        await asyncio.gather(*upload_tasks, return_exceptions=False)
+        results = await asyncio.gather(*upload_tasks, return_exceptions=True)
+
+        # Count successes and failures
+        successful = sum(1 for r in results if r is True)
+        failed = sum(1 for r in results if r is False or isinstance(r, Exception))
+
+        # Update batch status
+        self.batch_repo.update_total_files(batch_id, len(file_names))
+        self.batch_repo.update_db_insertion_status(batch_id, "Complete")
+
+        # Log stage complete
+        EventLogger.stage_complete(batch_id, 'file_distribution', successful, failed, metadata={
+            'task_id': self.task_id
+        })
+
+        logger.info("file_distribution_complete", successful=successful, failed=failed, task_id=self.task_id)
     
     async def _run_lid_stage(self, batch_id: int):
         """Run LID stage and update progress."""
         logger.info("lid_stage_starting", task_id=self.task_id)
         
+        self.batch_repo.update_lid_status(batch_id, "InProgress")
         lid_stage = LIDStage()
         await lid_stage.execute(batch_id, None)
+        self.batch_repo.update_lid_status(batch_id, "Complete")
         
-        # Update progress
-        self.task_tracker["progress"]["lid"]["done"] = self.task_tracker["progress"]["lid"]["total"]
+        # Update progress with actual completed count
+        completed_files = self.file_dist_repo.get_by_batch(batch_id)
+        completed_count = sum(1 for f in completed_files if f.get('lidDone') == 1)
+        self.task_tracker["progress"]["lid"]["done"] = completed_count
         
-        logger.info("lid_stage_completed", task_id=self.task_id)
+        logger.info("lid_stage_completed", task_id=self.task_id, completed=completed_count)
     
     def _update_calls_from_lid(self, batch_id: int):
         """Update Call records with language info from LID results."""
@@ -192,34 +237,46 @@ class AuditPipeline:
         """Run STT stage and update progress."""
         logger.info("stt_stage_starting", task_id=self.task_id)
         
+        self.batch_repo.update_stt_status(batch_id, "InProgress")
         stt_stage = STTStage()
         await stt_stage.execute(batch_id, self.settings.lid_container)
+        self.batch_repo.update_stt_status(batch_id, "Complete")
         
-        # Update progress
-        self.task_tracker["progress"]["stt"]["done"] = self.task_tracker["progress"]["stt"]["total"]
+        # Update progress with actual completed count
+        completed_files = self.file_dist_repo.get_by_batch(batch_id)
+        completed_count = sum(1 for f in completed_files if f.get('sttDone') == 1)
+        self.task_tracker["progress"]["stt"]["done"] = completed_count
         
-        logger.info("stt_stage_completed", task_id=self.task_id)
+        logger.info("stt_stage_completed", task_id=self.task_id, completed=completed_count)
     
     async def _run_llm1_stage(self, batch_id: int):
         """Run LLM1 stage and update progress."""
         logger.info("llm1_stage_starting", task_id=self.task_id)
         
+        self.batch_repo.update_llm1_status(batch_id, "InProgress")
         llm1_stage = LLM1Stage()
         await llm1_stage.execute(batch_id, self.settings.stt_container)
+        self.batch_repo.update_llm1_status(batch_id, "Complete")
         
-        # Update progress
-        self.task_tracker["progress"]["llm1"]["done"] = self.task_tracker["progress"]["llm1"]["total"]
+        # Update progress with actual completed count
+        completed_files = self.file_dist_repo.get_by_batch(batch_id)
+        completed_count = sum(1 for f in completed_files if f.get('llm1Done') == 1)
+        self.task_tracker["progress"]["llm1"]["done"] = completed_count
         
-        logger.info("llm1_stage_completed", task_id=self.task_id)
+        logger.info("llm1_stage_completed", task_id=self.task_id, completed=completed_count)
     
     async def _run_llm2_stage(self, batch_id: int):
         """Run LLM2 stage and update progress."""
         logger.info("llm2_stage_starting", task_id=self.task_id)
         
+        self.batch_repo.update_llm2_status(batch_id, "InProgress")
         llm2_stage = LLM2Stage()
         await llm2_stage.execute(batch_id, self.settings.llm1_container)
+        self.batch_repo.update_llm2_status(batch_id, "Complete")
         
-        # Update progress
-        self.task_tracker["progress"]["llm2"]["done"] = self.task_tracker["progress"]["llm2"]["total"]
+        # Update progress with actual completed count
+        completed_files = self.file_dist_repo.get_by_batch(batch_id)
+        completed_count = sum(1 for f in completed_files if f.get('llm2Done') == 1)
+        self.task_tracker["progress"]["llm2"]["done"] = completed_count
         
-        logger.info("llm2_stage_completed", task_id=self.task_id)
+        logger.info("llm2_stage_completed", task_id=self.task_id, completed=completed_count)

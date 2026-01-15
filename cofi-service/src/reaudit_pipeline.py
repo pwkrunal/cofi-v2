@@ -3,7 +3,8 @@ from typing import List, Dict
 import structlog
 
 from .config import get_settings
-from .database import get_database, CallRepo, TranscriptRepo, LidStatusRepo, FileDistributionRepo
+from .database import get_database, CallRepo, TranscriptRepo, LidStatusRepo, FileDistributionRepo, BatchStatusRepo
+from .event_logger import EventLogger
 from .pipeline.lid_stage import LIDStage
 from .pipeline.stt_stage import STTStage
 from .pipeline.llm1_stage import LLM1Stage
@@ -52,6 +53,7 @@ class ReauditPipeline:
         self.lid_repo = LidStatusRepo(self.db)
         self.file_dist_repo = FileDistributionRepo(self.db)
         self.audit_answer_repo = AuditAnswerRepo(self.db)
+        self.batch_repo = BatchStatusRepo(self.db)
     
     async def process(self, audio_names: List[str], stages: List[str]):
         """
@@ -66,6 +68,13 @@ class ReauditPipeline:
                    files=len(audio_names),
                    stages=stages)
         
+        # Log reaudit start to EventLogger (batch_id=0 for reaudit operations)
+        EventLogger.info(0, 'reaudit', f"Reaudit started for {len(audio_names)} files", metadata={
+            'task_id': self.task_id,
+            'stages': stages,
+            'files': audio_names
+        })
+        
         # Get call records for these audio files
         call_ids = []
         batch_ids = set()
@@ -77,18 +86,30 @@ class ReauditPipeline:
         
         if not call_ids:
             logger.warning("no_calls_found", audio_names=audio_names)
+            EventLogger.info(0, 'reaudit', f"No calls found for reaudit", metadata={
+                'task_id': self.task_id,
+                'audio_names': audio_names
+            })
             return
         
-        logger.info("calls_found_for_reaudit", count=len(call_ids))
+        logger.info("calls_found_for_reaudit", count=len(call_ids), batches=list(batch_ids))
         
         # Data cleanup based on stages
         if "stt" in stages:
             deleted = self._delete_transcripts(call_ids)
             logger.info("transcripts_deleted", count=deleted)
+            EventLogger.info(0, 'reaudit', f"Deleted {deleted} transcripts", metadata={
+                'task_id': self.task_id,
+                'count': deleted
+            })
         
         if "llm2" in stages:
             deleted = self._delete_audit_answers(call_ids)
             logger.info("audit_answers_deleted", count=deleted)
+            EventLogger.info(0, 'reaudit', f"Deleted {deleted} audit answers", metadata={
+                'task_id': self.task_id,
+                'count': deleted
+            })
         
         # Reset call statuses based on earliest stage
         self._reset_call_statuses(call_ids, stages)
@@ -115,7 +136,14 @@ class ReauditPipeline:
                 await self._run_llm2_stage(batch_id)
                 self._update_progress("llm2", len(audio_names))
         
-        logger.info("reaudit_pipeline_completed", task_id=self.task_id)
+        # Log reaudit completion
+        EventLogger.info(0, 'reaudit', f"Reaudit completed for {len(audio_names)} files", metadata={
+            'task_id': self.task_id,
+            'batches_processed': list(batch_ids),
+            'stages': stages
+        })
+        
+        logger.info("reaudit_pipeline_completed", task_id=self.task_id, batches=list(batch_ids))
     
     def _delete_transcripts(self, call_ids: List[int]) -> int:
         """Delete existing transcripts for given call IDs."""
