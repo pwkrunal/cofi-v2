@@ -82,6 +82,7 @@ class CofiOrchestrator:
 
         # Mark as InProgress
         self.batch_repo.update_db_insertion_status(batch_id, "InProgress")
+        self.batch_repo.set_stage_start_time(batch_id, "file_distribution")
 
         # Check if files already distributed (partial resume)
         existing = self.file_dist_repo.get_by_batch(batch_id)
@@ -89,6 +90,7 @@ class CofiOrchestrator:
         if existing:
             logger.info("files_already_distributed", batch_id=batch_id, count=len(existing))
             self.batch_repo.update_db_insertion_status(batch_id, "Complete")
+            self.batch_repo.set_stage_end_time(batch_id, "file_distribution")
             return False
 
         # Read batch files
@@ -157,6 +159,7 @@ class CofiOrchestrator:
         # Update batch status
         self.batch_repo.update_total_files(batch_id, len(batch_files.audio_files))
         self.batch_repo.update_db_insertion_status(batch_id, "Complete")
+        self.batch_repo.set_stage_end_time(batch_id, "file_distribution")
 
         # Log stage complete
         EventLogger.stage_complete(batch_id, 'file_distribution', uploaded_count, failed_count)
@@ -206,6 +209,7 @@ class CofiOrchestrator:
         # 1. Get or create batch
         batch = self.get_or_create_batch()
         batch_id = batch['id']
+        self.batch_repo.set_batch_start_time(batch_id)
         
         # 2. File Distribution Stage
         if batch.get('dbInsertionStatus') != 'Complete':
@@ -216,6 +220,7 @@ class CofiOrchestrator:
         # 3. Process callMetadata CSV (optional)
         if self.settings.callmetadata_enabled:
             if not self.metadata_manager.is_call_metadata_processed(batch_id):
+                self.batch_repo.set_stage_start_time(batch_id, "callmetadata")
                 try:
                     EventLogger.stage_start(batch_id, 'callmetadata')
                     count = self.metadata_manager.process_call_metadata_csv(batch_id)
@@ -225,6 +230,8 @@ class CofiOrchestrator:
                 except Exception as e:
                     logger.error("callmetadata_failed", error=str(e))
                     EventLogger.file_error(batch_id, 'callmetadata', 'callMetadata.csv', str(e))
+                finally:
+                    self.batch_repo.set_stage_end_time(batch_id, "callmetadata")
             else:
                 logger.info("callmetadata_already_processed")
         else:
@@ -233,6 +240,7 @@ class CofiOrchestrator:
         # 4. Process tradeMetadata CSV (optional)
         if self.settings.trademetadata_enabled:
             if not self.metadata_manager.is_trade_metadata_processed(batch_id):
+                self.batch_repo.set_stage_start_time(batch_id, "trademetadata")
                 try:
                     EventLogger.stage_start(batch_id, 'trademetadata')
                     count = self.metadata_manager.process_trade_metadata_csv(batch_id)
@@ -242,6 +250,8 @@ class CofiOrchestrator:
                 except Exception as e:
                     logger.error("trademetadata_failed", error=str(e))
                     EventLogger.file_error(batch_id, 'trademetadata', 'tradeMetadata.csv', str(e))
+                finally:
+                    self.batch_repo.set_stage_end_time(batch_id, "trademetadata")
             else:
                 logger.info("trademetadata_already_processed")
         else:
@@ -254,9 +264,11 @@ class CofiOrchestrator:
         if self.settings.denoise_enabled:
             if batch.get('denoiseStatus') != 'Complete':
                 self.batch_repo.update_denoise_status(batch_id, "InProgress")
+                self.batch_repo.set_stage_start_time(batch_id, "denoise")
                 denoise_stage = DenoiseStage()
                 await denoise_stage.execute(batch_id, previous_container)
                 self.batch_repo.update_denoise_status(batch_id, "Complete")
+                self.batch_repo.set_stage_end_time(batch_id, "denoise")
                 self.update_batch_status(batch_id, "denoiseDone")
             else:
                 logger.info("denoise_stage_already_complete")
@@ -267,9 +279,11 @@ class CofiOrchestrator:
         if self.settings.ivr_enabled:
             if batch.get('ivrStatus') != 'Complete':
                 self.batch_repo.update_ivr_status(batch_id, "InProgress")
+                self.batch_repo.set_stage_start_time(batch_id, "ivr")
                 ivr_stage = IVRStage()
                 await ivr_stage.execute(batch_id, previous_container)
                 self.batch_repo.update_ivr_status(batch_id, "Complete")
+                self.batch_repo.set_stage_end_time(batch_id, "ivr")
                 self.update_batch_status(batch_id, "ivrDone")
                 previous_container = self.settings.ivr_container
             else:
@@ -280,9 +294,11 @@ class CofiOrchestrator:
         # Stage: LID
         if batch.get('lidStatus') != 'Complete':
             self.batch_repo.update_lid_status(batch_id, "InProgress")
+            self.batch_repo.set_stage_start_time(batch_id, "lid")
             lid_stage = LIDStage()
             await lid_stage.execute(batch_id, previous_container)
             self.batch_repo.update_lid_status(batch_id, "Complete")
+            self.batch_repo.set_stage_end_time(batch_id, "lid")
             self.update_batch_status(batch_id, "lidDone")
             previous_container = self.settings.lid_container
         else:
@@ -295,6 +311,7 @@ class CofiOrchestrator:
         if self.settings.rule_engine_enabled:
             if batch.get('triagingStatus') != 'Complete':
                 self.batch_repo.update_triaging_status(batch_id, "InProgress")
+                self.batch_repo.set_stage_start_time(batch_id, "triaging")
                 try:
                     EventLogger.stage_start(batch_id, 'triaging', metadata={'step': 1, 'description': 'Trade to audio mapping'})
                     count = self.rule_engine.process(batch_id)
@@ -313,6 +330,8 @@ class CofiOrchestrator:
                 except Exception as e:
                     logger.error("rule_engine_failed", error=str(e))
                     EventLogger.file_error(batch_id, 'triaging', 'rule_engine_step1', str(e))
+                finally:
+                    self.batch_repo.set_stage_end_time(batch_id, "triaging")
             else:
                 logger.info("rule_engine_already_complete")
         else:
@@ -321,9 +340,11 @@ class CofiOrchestrator:
         # Stage: STT
         if batch.get('sttStatus') != 'Complete':
             self.batch_repo.update_stt_status(batch_id, "InProgress")
+            self.batch_repo.set_stage_start_time(batch_id, "stt")
             stt_stage = STTStage()
             await stt_stage.execute(batch_id, previous_container)
             self.batch_repo.update_stt_status(batch_id, "Complete")
+            self.batch_repo.set_stage_end_time(batch_id, "stt")
             self.update_batch_status(batch_id, "sttDone")
             previous_container = self.settings.stt_container
         else:
@@ -333,9 +354,11 @@ class CofiOrchestrator:
         if self.settings.llm1_enabled:
             if batch.get('llm1Status') != 'Complete':
                 self.batch_repo.update_llm1_status(batch_id, "InProgress")
+                self.batch_repo.set_stage_start_time(batch_id, "llm1")
                 llm1_stage = LLM1Stage()
                 await llm1_stage.execute(batch_id, previous_container)
                 self.batch_repo.update_llm1_status(batch_id, "Complete")
+                self.batch_repo.set_stage_end_time(batch_id, "llm1")
                 self.update_batch_status(batch_id, "llm1Done")
             else:
                 logger.info("llm1_stage_already_complete")
@@ -346,9 +369,11 @@ class CofiOrchestrator:
         if self.settings.llm2_enabled:
             if batch.get('llm2Status') != 'Complete':
                 self.batch_repo.update_llm2_status(batch_id, "InProgress")
+                self.batch_repo.set_stage_start_time(batch_id, "llm2")
                 llm2_stage = LLM2Stage()
                 await llm2_stage.execute(batch_id, previous_container)
                 self.batch_repo.update_llm2_status(batch_id, "Complete")
+                self.batch_repo.set_stage_end_time(batch_id, "llm2")
                 self.update_batch_status(batch_id, "llm2Done")
             else:
                 logger.info("llm2_stage_already_complete")
@@ -362,8 +387,10 @@ class CofiOrchestrator:
         if self.settings.rule_engine_enabled:
             if batch.get('triagingStep2Status') != 'Complete':
                 logger.info("rule_engine_step2_starting")
+                self.batch_repo.set_stage_start_time(batch_id, "triaging_step2")
                 # TODO: Add Rule Engine Step 2 implementation here
                 self.batch_repo.update_triaging_step2_status(batch_id, "Complete")
+                self.batch_repo.set_stage_end_time(batch_id, "triaging_step2")
                 logger.info("rule_engine_step2_done")
             else:
                 logger.info("rule_engine_step2_already_complete")
@@ -372,6 +399,7 @@ class CofiOrchestrator:
         
         # Mark batch complete
         self.update_batch_status(batch_id, "Completed")
+        self.batch_repo.set_batch_end_time(batch_id)
         
         logger.info("pipeline_completed", batch_id=batch_id)
 

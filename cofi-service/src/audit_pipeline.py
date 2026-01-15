@@ -62,6 +62,7 @@ class AuditPipeline:
         
         # Create batch for this audit
         batch_id = await self._create_audit_batch(file_names)
+        self.batch_repo.set_batch_start_time(batch_id)
         
         # Distribute files to GPUs
         await self._distribute_files(file_names, upload_dir, batch_id)
@@ -89,6 +90,7 @@ class AuditPipeline:
         
         # Mark batch as completed
         self.batch_repo.update_status(batch_id, "Completed")
+        self.batch_repo.set_batch_end_time(batch_id)
         
         logger.info("audit_pipeline_completed", task_id=self.task_id, batch_id=batch_id)
     
@@ -113,6 +115,9 @@ class AuditPipeline:
     async def _distribute_files(self, file_names: List[str], upload_dir: str, batch_id: int):
         """Distribute files to GPUs using round-robin in parallel."""
         gpu_list = self.settings.gpu_machine_list
+
+        self.batch_repo.update_db_insertion_status(batch_id, "InProgress")
+        self.batch_repo.set_stage_start_time(batch_id, "file_distribution")
 
         # Log stage start
         EventLogger.stage_start(batch_id, 'file_distribution', total_files=len(file_names), metadata={
@@ -173,6 +178,7 @@ class AuditPipeline:
         # Update batch status
         self.batch_repo.update_total_files(batch_id, len(file_names))
         self.batch_repo.update_db_insertion_status(batch_id, "Complete")
+        self.batch_repo.set_stage_end_time(batch_id, "file_distribution")
 
         # Log stage complete
         EventLogger.stage_complete(batch_id, 'file_distribution', successful, failed, metadata={
@@ -186,9 +192,11 @@ class AuditPipeline:
         logger.info("lid_stage_starting", task_id=self.task_id)
         
         self.batch_repo.update_lid_status(batch_id, "InProgress")
+        self.batch_repo.set_stage_start_time(batch_id, "lid")
         lid_stage = LIDStage()
         await lid_stage.execute(batch_id, None)
         self.batch_repo.update_lid_status(batch_id, "Complete")
+        self.batch_repo.set_stage_end_time(batch_id, "lid")
         
         # Update progress with actual completed count
         completed_files = self.file_dist_repo.get_by_batch(batch_id)
@@ -228,9 +236,11 @@ class AuditPipeline:
         logger.info("stt_stage_starting", task_id=self.task_id)
         
         self.batch_repo.update_stt_status(batch_id, "InProgress")
+        self.batch_repo.set_stage_start_time(batch_id, "stt")
         stt_stage = STTStage()
         await stt_stage.execute(batch_id, self.settings.lid_container)
         self.batch_repo.update_stt_status(batch_id, "Complete")
+        self.batch_repo.set_stage_end_time(batch_id, "stt")
         
         # Update progress with actual completed count
         completed_files = self.file_dist_repo.get_by_batch(batch_id)
@@ -244,9 +254,11 @@ class AuditPipeline:
         logger.info("llm1_stage_starting", task_id=self.task_id)
         
         self.batch_repo.update_llm1_status(batch_id, "InProgress")
+        self.batch_repo.set_stage_start_time(batch_id, "llm1")
         llm1_stage = LLM1Stage()
         await llm1_stage.execute(batch_id, self.settings.stt_container)
         self.batch_repo.update_llm1_status(batch_id, "Complete")
+        self.batch_repo.set_stage_end_time(batch_id, "llm1")
         
         # Update progress with actual completed count
         completed_files = self.file_dist_repo.get_by_batch(batch_id)
@@ -260,9 +272,11 @@ class AuditPipeline:
         logger.info("llm2_stage_starting", task_id=self.task_id)
         
         self.batch_repo.update_llm2_status(batch_id, "InProgress")
+        self.batch_repo.set_stage_start_time(batch_id, "llm2")
         llm2_stage = LLM2Stage()
         await llm2_stage.execute(batch_id, self.settings.llm1_container)
         self.batch_repo.update_llm2_status(batch_id, "Complete")
+        self.batch_repo.set_stage_end_time(batch_id, "llm2")
         
         # Update progress with actual completed count
         completed_files = self.file_dist_repo.get_by_batch(batch_id)

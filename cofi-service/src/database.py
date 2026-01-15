@@ -111,6 +111,55 @@ class BatchStatusRepo:
     
     def __init__(self, db: Database):
         self.db = db
+        self._stage_timestamp_columns = {
+            "file_distribution": ("dbInsertionStartTime", "dbInsertionEndTime"),
+            "callmetadata": ("callmetadataStartTime", "callmetadataEndTime"),
+            "trademetadata": ("trademetadataStartTime", "trademetadataEndTime"),
+            "denoise": ("denoiseStartTime", "denoiseEndTime"),
+            "ivr": ("ivrStartTime", "ivrEndTime"),
+            "lid": ("lidStartTime", "lidEndTime"),
+            "triaging": ("triagingStartTime", "triagingEndTime"),
+            "triaging_step2": ("triagingStep2StartTime", "triagingStep2EndTime"),
+            "stt": ("sttStartTime", "sttEndTime"),
+            "llm1": ("llm1StartTime", "llm1EndTime"),
+            "llm2": ("llm2StartTime", "llm2EndTime"),
+        }
+
+    def _get_stage_timestamp_columns(self, stage_name: str) -> Tuple[str, str]:
+        """Resolve start/end timestamp column names for a stage."""
+        if stage_name not in self._stage_timestamp_columns:
+            raise ValueError(f"Unknown stage name: {stage_name}")
+        return self._stage_timestamp_columns[stage_name]
+
+    def set_stage_start_time(self, batch_id: int, stage_name: str, only_if_null: bool = True):
+        """Set stage start time using NOW()."""
+        start_column, _ = self._get_stage_timestamp_columns(stage_name)
+        query = f"UPDATE batchStatus SET {start_column} = NOW() WHERE id = %s"
+        if only_if_null:
+            query += f" AND {start_column} IS NULL"
+        self.db.execute_update(query, (batch_id,))
+
+    def set_stage_end_time(self, batch_id: int, stage_name: str, only_if_null: bool = True):
+        """Set stage end time using NOW()."""
+        _, end_column = self._get_stage_timestamp_columns(stage_name)
+        query = f"UPDATE batchStatus SET {end_column} = NOW() WHERE id = %s"
+        if only_if_null:
+            query += f" AND {end_column} IS NULL"
+        self.db.execute_update(query, (batch_id,))
+
+    def set_batch_start_time(self, batch_id: int, only_if_null: bool = True):
+        """Set batch start time using NOW()."""
+        query = "UPDATE batchStatus SET batchStartTime = NOW() WHERE id = %s"
+        if only_if_null:
+            query += " AND batchStartTime IS NULL"
+        self.db.execute_update(query, (batch_id,))
+
+    def set_batch_end_time(self, batch_id: int, only_if_null: bool = True):
+        """Set batch end time using NOW()."""
+        query = "UPDATE batchStatus SET batchEndTime = NOW() WHERE id = %s"
+        if only_if_null:
+            query += " AND batchEndTime IS NULL"
+        self.db.execute_update(query, (batch_id,))
     
     def get_by_date_and_number(self, batch_date: str, batch_number: int) -> Optional[Dict]:
         """Get batch by date and number."""
